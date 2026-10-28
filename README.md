@@ -54,11 +54,14 @@ python -m pip install -e .
 cd /path/to/f2orge
 python3 -m venv .venv
 source .venv/bin/activate
+python -m pip install --upgrade pip setuptools
 python -m pip install -e .
 ```
 
-To run the tests too, install the development extra instead with `python -m pip install -e ".[dev]"`.
-Activate the virtual environment again whenever you open a new terminal.
+Upgrading pip is important on macOS installations that bundle an older pip: editable installs from
+`pyproject.toml` require a modern build frontend. To run the tests too, use
+`python -m pip install -e ".[dev]"` after upgrading pip and setuptools. Activate the virtual
+environment again whenever you open a new terminal.
 
 ### 2. Launch F²ORGE
 
