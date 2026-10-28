@@ -1,0 +1,17 @@
+# Variables and units (features 1, 2)
+mass = 150 kg
+velocity = 30 m/s
+print "momentum:", mass * velocity
+
+# Unit conversion (3) and automatic simplification to named units (4)
+convert 10 ft -> m
+150 kg * 9.81 m/s^2
+
+# Functions and constants (6, 7, 32)
+sin(30 deg)
+sqrt(16 m^2)
+pi * (0.5 m)^2
+
+# Temperatures
+convert 25 degC -> K
+convert 98.6 degF -> degC

@@ -1,0 +1,19 @@
+# Imports (9, 40): by name from the standard library, or by path
+import Bernoulli
+import ./formulas/Drag.eq
+
+solve Bernoulli for v2 {
+    p1 = 101325 Pa
+    p2 = 99000 Pa
+    v1 = 5 m/s
+    h1 = 0 m
+    h2 = 0 m
+    rho = 1.225 kg/m^3
+}
+
+solve Drag for CD {
+    D = 12 N
+    rho = 1.225 kg/m^3
+    V = 20 m/s
+    S = 0.5 m^2
+}

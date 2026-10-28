@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "f2orge"
+version = "0.1.0"
+description = "F²ORGE (Formula Forge): a unit-safe programming language where reusable equations become solvers, docs and graphs."
+readme = "README.md"
+requires-python = ">=3.9"
+license = { text = "MIT" }
+dependencies = []                      # standard library only: no network, no database, no accounts
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+forge = "f2orge.cli:main"              # the command from the spec
+f2forge = "f2orge.cli:main"            # same thing; use this if another tool already owns `forge`
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+f2orge = ["stdlib/*.eq"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

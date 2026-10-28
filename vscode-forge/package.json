@@ -1,0 +1,26 @@
+{
+  "name": "forge-language",
+  "displayName": "F²ORGE Language Support",
+  "description": "Syntax highlighting for F²ORGE programs (.forge) and equation files (.eq).",
+  "version": "0.1.0",
+  "publisher": "f2orge",
+  "engines": { "vscode": "^1.60.0" },
+  "categories": ["Programming Languages"],
+  "contributes": {
+    "languages": [
+      {
+        "id": "forge",
+        "aliases": ["F²ORGE", "forge"],
+        "extensions": [".forge", ".eq"],
+        "configuration": "./language-configuration.json"
+      }
+    ],
+    "grammars": [
+      {
+        "language": "forge",
+        "scopeName": "source.forge",
+        "path": "./syntaxes/forge.tmLanguage.json"
+      }
+    ]
+  }
+}

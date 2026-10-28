@@ -1,0 +1,75 @@
+{
+  "$schema": "https://raw.githubusercontent.com/martinring/tmlanguage/master/tmlanguage.json",
+  "name": "F²ORGE",
+  "scopeName": "source.forge",
+  "patterns": [
+    { "include": "#comments" },
+    { "include": "#strings" },
+    { "include": "#import" },
+    { "include": "#eq-definition" },
+    { "include": "#keywords" },
+    { "include": "#declaration" },
+    { "include": "#functions" },
+    { "include": "#constants" },
+    { "include": "#quantity" },
+    { "include": "#operators" }
+  ],
+  "repository": {
+    "comments": {
+      "patterns": [
+        { "name": "comment.line.number-sign.forge", "match": "#.*$" },
+        { "name": "comment.line.double-slash.forge", "match": "//.*$" }
+      ]
+    },
+    "strings": {
+      "name": "string.quoted.double.forge",
+      "begin": "\"",
+      "end": "\"",
+      "patterns": [{ "name": "constant.character.escape.forge", "match": "\\\\." }]
+    },
+    "import": {
+      "match": "^\\s*(import)\\s+([^\\s#]+)",
+      "captures": {
+        "1": { "name": "keyword.control.import.forge" },
+        "2": { "name": "string.unquoted.path.forge" }
+      }
+    },
+    "eq-definition": {
+      "match": "\\b(eq)\\s+([A-Za-z_][A-Za-z0-9_]*)",
+      "captures": {
+        "1": { "name": "keyword.control.forge" },
+        "2": { "name": "entity.name.type.class.forge" }
+      }
+    },
+    "keywords": {
+      "name": "keyword.control.forge",
+      "match": "\\b(eq|import|export|solve|convert|print|for)\\b"
+    },
+    "declaration": {
+      "match": "^\\s*([A-Za-z_µΩ][A-Za-z0-9_µΩ]*)\\s*(:)",
+      "captures": {
+        "1": { "name": "variable.parameter.forge" },
+        "2": { "name": "punctuation.separator.forge" }
+      }
+    },
+    "functions": {
+      "name": "support.function.builtin.forge",
+      "match": "\\b(sin|cos|tan|asin|acos|atan|atan2|exp|ln|log|sqrt|abs|min|max)(?=\\s*\\()"
+    },
+    "constants": {
+      "name": "support.constant.forge",
+      "match": "\\b(pi|muEarth|rEarth|speedOfLight|kB|NA|sigmaSB|rhoSL|pSL|TSL)\\b"
+    },
+    "quantity": {
+      "match": "(\\d[\\d_]*(?:\\.\\d+)?(?:[eE][+-]?\\d+)?|\\.\\d+)(?:[ \\t]*([A-Za-zµΩ°][A-Za-z0-9_µΩ°]*(?:\\^[+-]?\\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)?(?:[*/](?:[A-Za-zµΩ°][A-Za-z0-9_µΩ°]*|\\([^)]*\\))(?:\\^[+-]?\\d+|[⁰¹²³⁴⁵⁶⁷⁸⁹⁻]+)?)*))?",
+      "captures": {
+        "1": { "name": "constant.numeric.forge" },
+        "2": { "name": "constant.other.unit.forge" }
+      }
+    },
+    "operators": {
+      "name": "keyword.operator.forge",
+      "match": "->|[-+*/^=×·÷→]"
+    }
+  }
+}

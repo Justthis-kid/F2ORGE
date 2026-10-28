@@ -1,0 +1,22 @@
+# Stall speed of a small glider from the standard-library lift equation (15, 40)
+import Lift
+
+# lift must equal weight at the stall speed
+solve Lift for V {
+    L = 3.5 kg * g
+    rho = rhoSL
+    S = 0.16 m^2
+    CL = 1.3
+}
+
+# a Falcon-9 style delta-v estimate
+import DeltaV
+solve DeltaV for dv {
+    Isp = 311 s
+    m0 = 549 t
+    mf = 150 t
+}
+
+# low Earth orbit speed, using the aerospace constants pack
+import CircularOrbit
+CircularOrbit(mu = muEarth, r = rEarth + 400 km).v

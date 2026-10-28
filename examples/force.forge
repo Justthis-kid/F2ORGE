@@ -1,0 +1,25 @@
+# Equations as first-class objects (8, 11, 12, 13)
+eq Force {
+    description = "Newton's Second Law"
+    F = m * a
+}
+
+# Calling an equation (12) - inputs and outputs are detected automatically (11)
+force = Force(
+    m = 150 kg,
+    a = 9.81 m/s²
+)
+print "force:", force
+
+# Solving for any variable (16, 17): the equation is rearranged for you
+solve Force for a {
+    F = 100 N
+    m = 50 kg
+}
+solve Force for m {
+    F = 2 kN
+    a = 4 m/s^2
+}
+
+# Export (10): writes Force.eq next to this file
+export Force
