@@ -31,10 +31,15 @@ pytest for running the tests.
 
 ### 1. Install
 
+First, change into the directory where you downloaded or cloned F²ORGE. Replace the sample path
+below if you saved it somewhere else. For example, if it is in `Downloads/f2orge`, use
+`cd ~/Downloads/f2orge` on macOS/Linux or `cd "$HOME\Downloads\f2orge"` in PowerShell. The folder
+you enter must contain `pyproject.toml`.
+
 **Windows (PowerShell):**
 
 ```powershell
-cd path\to\f2orge
+cd "$HOME\Downloads\f2orge"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .
@@ -43,7 +48,7 @@ python -m pip install -e .
 If PowerShell says script execution is disabled when activating, open Command Prompt and run:
 
 ```bat
-cd path\to\f2orge
+cd "%USERPROFILE%\Downloads\f2orge"
 .venv\Scripts\activate.bat
 python -m pip install -e .
 ```
@@ -51,7 +56,7 @@ python -m pip install -e .
 **macOS / Linux:**
 
 ```bash
-cd /path/to/f2orge
+cd ~/Downloads/f2orge
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools
