@@ -38,6 +38,7 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert 'node.kind === "Script"' in script
             assert "function startResize" in script
             assert "Share this variable?" in script
+            assert "async function showPlot" in script
 
         with urlopen(f"{base_url}/brand.svg") as response:
             assert response.headers["Content-Type"].startswith("image/svg+xml")
@@ -49,6 +50,24 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
         assert result["success"] is True and result["target"] == "python"
         assert "unit-safety checks are not retained" in result["output"]
         assert "force = ((150.0 * 1.0) * (9.81 * 1.0))" in result["output"]
+
+        payload = json.dumps({
+            "source": "time = <0 s, 1 s, 2 s>\nposition = <0 m, 3 m, 8 m>\n",
+        }).encode("utf-8")
+        request = Request(f"{base_url}/api/execute", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            assert json.loads(response.read())["success"] is True
+        payload = json.dumps({"command": "plot(time, position)"}).encode("utf-8")
+        request = Request(f"{base_url}/api/plot", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            result = json.loads(response.read())
+        assert result["success"] is True
+        assert result["title"] == "position (m) vs time (s)"
+        assert "<svg " in result["svg"] and "<polyline " in result["svg"]
+
+        request = Request(f"{base_url}/api/clear", b"{}", {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            assert json.loads(response.read())["success"] is True
 
         payload = json.dumps({"source": "eq Force { F = m * a }\n", "target": "cpp"}).encode("utf-8")
         request = Request(f"{base_url}/api/transpile", payload, {"Content-Type": "application/json"})

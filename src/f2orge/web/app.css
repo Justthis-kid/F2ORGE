@@ -388,6 +388,18 @@ body.dark .prompt, body.dark .command-submit { color: #e39a67; }
 .transpile-dialog textarea {
   min-height: min(54vh, 430px); resize: vertical; white-space: pre; overflow: auto;
 }
+.plot-dialog {
+  width: min(1060px, calc(100vw - 32px)); max-width: 1060px;
+  height: min(760px, calc(100vh - 32px)); max-height: 760px;
+}
+.plot-dialog[open] { display: flex; flex-direction: column; }
+.plot-dialog-header { display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+.plot-dialog-header h2 { margin: 4px 0 0; color: var(--ink); font: 600 18px Manrope, sans-serif; }
+.plot-actions { width: auto; margin: 0; }
+.plot-content { min-height: 0; flex: 1; margin-top: 15px; overflow: hidden; }
+.plot-content svg { display: block; width: 100%; height: 100%; touch-action: none; cursor: grab; }
+.plot-content svg.dragging { cursor: grabbing; }
+.plot-hint { margin-top: 8px !important; }
 .dialog-actions { width: 100%; margin-top: 23px; display: flex; justify-content: flex-end; gap: 8px; }
 body.dark .node-code { color: #c2b9ae; background: #191b1f; border-color: #41464c; }
 body.dark .node-code:focus { border-color: #a56741; box-shadow: 0 0 0 2px #dd7a3518; }

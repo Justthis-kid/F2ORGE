@@ -160,3 +160,102 @@ document.querySelectorAll("[data-series]").forEach(control=>control.addEventList
 </body>
 </html>
 """
+
+
+def render_raster(
+    title: str,
+    x_label: str,
+    y_label: str,
+    series: Sequence[Tuple[str, Sequence[Tuple[float, float]]]],
+):
+    """Render a graph to a Pillow image suitable for PNG or PDF export."""
+    try:
+        from PIL import Image, ImageDraw, ImageFont
+    except ModuleNotFoundError as err:
+        if err.name != "PIL":
+            raise
+        from .errors import ForgeError
+
+        raise ForgeError(
+            "PNG and PDF export require the Pillow image library",
+            title="Graph export unavailable",
+            hint='Install it with: pip install "f2orge[plots]".',
+        ) from err
+    if not series or any(not points for _, points in series):
+        from .errors import ForgeError
+
+        raise ForgeError("a graph needs at least one non-empty curve", title="Cannot export graph")
+
+    width, height = 1200, 750
+    left, right, top, bottom = 105, 36, 76, 100
+    plot_width, plot_height = width - left - right, height - top - bottom
+    xs = [x for _, curve in series for x, _ in curve]
+    ys = [y for _, curve in series for _, y in curve]
+    xmin, xmax = min(xs), max(xs)
+    ymin, ymax = min(ys), max(ys)
+    if xmin == xmax:
+        padding = max(abs(xmin) * 0.05, 1.0)
+        xmin, xmax = xmin - padding, xmax + padding
+    if ymin == ymax:
+        padding = max(abs(ymin) * 0.05, 1.0)
+        ymin, ymax = ymin - padding, ymax + padding
+    xpad, ypad = (xmax - xmin) * 0.04, (ymax - ymin) * 0.04
+    xmin, xmax = xmin - xpad, xmax + xpad
+    ymin, ymax = ymin - ypad, ymax + ypad
+
+    def sx(value: float) -> float:
+        return left + (value - xmin) / (xmax - xmin) * plot_width
+
+    def sy(value: float) -> float:
+        return top + (ymax - value) / (ymax - ymin) * plot_height
+
+    image = Image.new("RGB", (width, height), "#fcfaf5")
+    draw = ImageDraw.Draw(image)
+    font = ImageFont.load_default(size=17)
+    small_font = ImageFont.load_default(size=14)
+    draw.text((width / 2, 28), title, fill="#302f2c", font=font, anchor="mt")
+    for index in range(6):
+        xv = xmin + (xmax - xmin) * index / 5
+        yv = ymax - (ymax - ymin) * index / 5
+        x, y = sx(xv), sy(yv)
+        draw.line((x, top, x, height - bottom), fill="#e2ddd4", width=1)
+        draw.line((left, y, width - right, y), fill="#e2ddd4", width=1)
+        draw.text((x, height - bottom + 12), format_number(xv), fill="#77746e", font=small_font, anchor="mt")
+        draw.text((left - 12, y), format_number(yv), fill="#77746e", font=small_font, anchor="rm")
+    draw.line((left, top, left, height - bottom, width - right, height - bottom), fill="#59544d", width=2)
+    colors = ("#c76124", "#557da5", "#648a67", "#8d66a2", "#bf8b32", "#4d9996")
+    for index, (label, points) in enumerate(series):
+        color = colors[index % len(colors)]
+        draw.line([(sx(x), sy(y)) for x, y in points], fill=color, width=4, joint="curve")
+        if len(series) > 1:
+            row_y = top + 15 + index * 24
+            draw.line((width - 210, row_y + 7, width - 190, row_y + 7), fill=color, width=4)
+            draw.text((width - 180, row_y), label or f"Series {index + 1}",
+                      fill="#302f2c", font=small_font)
+    draw.text((left + plot_width / 2, height - 23), x_label,
+              fill="#302f2c", font=font, anchor="mm")
+    vertical = Image.new("RGBA", (height, 34), (0, 0, 0, 0))
+    ImageDraw.Draw(vertical).text((0, 0), y_label, fill="#302f2c", font=font)
+    vertical = vertical.rotate(90, expand=True)
+    image.paste(vertical, (10, int(top + plot_height / 2 - vertical.height / 2)), vertical)
+    return image
+
+
+def save_graph(
+    path: str,
+    format: str,
+    title: str,
+    x_label: str,
+    y_label: str,
+    series: Sequence[Tuple[str, Sequence[Tuple[float, float]]]],
+) -> None:
+    """Write a graph as SVG, PNG, or PDF."""
+    if format == "svg":
+        from pathlib import Path
+
+        Path(path).write_text(render_svg(title, x_label, y_label, series), encoding="utf-8")
+        return
+    if format not in ("png", "pdf"):
+        raise ValueError(f"unsupported graph format: {format}")
+    image = render_raster(title, x_label, y_label, series)
+    image.save(path, format=format.upper(), resolution=144.0)

@@ -13,7 +13,7 @@ from .calculator import render_calculator, run_terminal_calculator
 from .docgen import document_all
 from .errors import ForgeError
 from .interpreter import Interpreter
-from .plot import render_interactive_html, render_svg
+from .plot import render_interactive_html, render_svg, save_graph
 from .quantity import Quantity
 from .repl import run_shell
 from .units import Unit, units_by_kind
@@ -278,17 +278,35 @@ def cmd_graph(args) -> int:
         y_name = y_name[:1].upper() + y_name[1:]
         x_label = f"{x_name} ({x_symbol})" if x_symbol else x_name
         y_label = f"{y_name} ({y_symbol})" if y_symbol else y_name
-        svg = render_svg(f"{eq.name}: {output_name} vs {args.vary}", x_label, y_label, named_series)
+        title = f"{eq.name}: {output_name} vs {args.vary}"
+        if args.interactive and args.window:
+            raise ForgeError("--interactive cannot be combined with --window", title="Invalid graph options")
         if args.interactive:
+            svg = render_svg(title, x_label, y_label, named_series)
             page = render_interactive_html(
-                svg, f"{eq.name}: {output_name} vs {args.vary}",
+                svg, title,
                 [label for label, _ in named_series],
             )
             output = Path(args.output) if args.output else Path(f"{eq.name}-{args.vary}.html")
             output.write_text(page, encoding="utf-8")
+        elif args.window:
+            svg = render_svg(title, x_label, y_label, named_series)
+            page = render_interactive_html(svg, title, [label for label, _ in named_series])
+            from .desktop_tools import show_html_window
+
+            show_html_window(title, page)
+            print("Opened plot window")
+            return 0
         else:
-            output = Path(args.output) if args.output else Path(f"{eq.name}-{args.vary}.svg")
-            output.write_text(svg, encoding="utf-8")
+            output = Path(args.output) if args.output else Path(f"{eq.name}-{args.vary}.{args.format or 'svg'}")
+            output_format = args.format or output.suffix.lower().lstrip(".")
+            if output_format not in ("svg", "png", "pdf"):
+                raise ForgeError(
+                    f"unsupported graph format '{output_format}'",
+                    title="Invalid graph format",
+                    hint="Choose SVG, PNG, or PDF.",
+                )
+            save_graph(str(output), output_format, title, x_label, y_label, named_series)
     except ForgeError as err:
         _report(err)
         return 1
@@ -296,6 +314,47 @@ def cmd_graph(args) -> int:
         print(f"error: cannot write graph: {err}", file=sys.stderr)
         return 1
     print(f"Wrote {output}")
+    return 0
+
+
+def cmd_plot(args) -> int:
+    from .desktop import DesktopSession
+    from .plot import render_interactive_html, render_svg
+
+    path = Path(args.file)
+    if not path.is_file():
+        print(f"error: cannot find {path}", file=sys.stderr)
+        return 2
+    session = DesktopSession(base_dir=path.resolve().parent)
+    try:
+        source = path.read_text(encoding="utf-8-sig")
+    except OSError as err:
+        print(f"error: cannot read {path}: {err}", file=sys.stderr)
+        return 2
+    output, success = session.execute(source, path)
+    if not success:
+        print(output, file=sys.stderr)
+        return 1
+    command = f"plot({args.x}, {args.y})" if args.x else f"plot({args.y})"
+    try:
+        x_label, y_label, points = session.plot_data(command)
+        title = f"{y_label} vs {x_label}"
+        svg = render_svg(title, x_label, y_label, [("", points)])
+        page = render_interactive_html(svg, title, [""])
+        if args.output:
+            Path(args.output).write_text(page, encoding="utf-8")
+            print(f"Wrote {args.output}")
+        else:
+            from .desktop_tools import show_html_window
+
+            show_html_window(title, page)
+            print("Opened plot window")
+    except ForgeError as err:
+        _report(err)
+        return 1
+    except OSError as err:
+        print(f"error: cannot create plot: {err}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -320,6 +379,11 @@ def cmd_calc(args) -> int:
                     title="Calculator unavailable",
                 )
             eq_name = target
+        if args.terminal and (args.desktop or args.executable):
+            raise ForgeError(
+                "--terminal cannot be combined with --desktop or --executable",
+                title="Invalid calculator options",
+            )
         if args.terminal:
             if args.output:
                 raise ForgeError("--terminal cannot be combined with --output",
@@ -330,9 +394,26 @@ def cmd_calc(args) -> int:
                                  title="Calculator unavailable")
             run_terminal_calculator(interp, eq_name)
             return 0
+        if args.desktop and args.output:
+            raise ForgeError("--desktop cannot be combined with --output",
+                             title="Invalid calculator options")
         page = render_calculator(interp, eq_name)
-        output = Path(args.output) if args.output else Path(f"{eq_name}-calculator.html")
-        output.write_text(page, encoding="utf-8")
+        if args.desktop and args.executable:
+            raise ForgeError("--desktop cannot be combined with --executable",
+                             title="Invalid calculator options")
+        if args.desktop:
+            from .desktop_tools import show_html_window
+
+            show_html_window(f"{eq_name} — F²ORGE Calculator", page)
+            return 0
+        if args.executable:
+            from .desktop_tools import build_calculator_executable
+
+            output = Path(args.output) if args.output else Path(f"{eq_name}-calculator.exe")
+            build_calculator_executable(page, output, eq_name)
+        else:
+            output = Path(args.output) if args.output else Path(f"{eq_name}-calculator.html")
+            output.write_text(page, encoding="utf-8")
     except ForgeError as err:
         _report(err)
         return 1
@@ -432,14 +513,27 @@ def build_parser() -> argparse.ArgumentParser:
     g.add_argument("--samples", type=int, default=101, help="number of samples (2-5001; default: 101)")
     g.add_argument("--output-name", help="output variable to plot (defaults to the primary output)")
     g.add_argument("--interactive", action="store_true", help="write a standalone interactive HTML graph")
+    g.add_argument("--window", action="store_true", help="open an interactive native plot window")
+    g.add_argument("--format", choices=("svg", "png", "pdf"),
+                   help="static export format (inferred from -o when omitted)")
     g.add_argument("-o", "--output", help="output filename (defaults to Equation-variable.svg or .html)")
     g.set_defaults(func=cmd_graph)
+
+    plot = sub.add_parser("plot", help="open an interactive plot of vectors from a F²ORGE program")
+    plot.add_argument("file", help="F²ORGE source file that creates vector variables")
+    plot.add_argument("y", help="vector to plot on the vertical axis")
+    plot.add_argument("--x", help="vector to use for the horizontal axis (defaults to sample index)")
+    plot.add_argument("-o", "--output", help="write a standalone interactive HTML plot instead")
+    plot.set_defaults(func=cmd_plot)
 
     c = sub.add_parser("calc", help="generate a standalone offline HTML calculator")
     c.add_argument("target", help="an equation name (Force), or a single-equation .eq file")
     c.add_argument("-o", "--output", help="HTML filename (defaults to Equation-calculator.html)")
     c.add_argument("--terminal", action="store_true",
                    help="run an interactive terminal calculator instead of writing HTML")
+    c.add_argument("--desktop", action="store_true", help="open a native desktop calculator window")
+    c.add_argument("--executable", action="store_true",
+                   help="build a standalone one-file Windows calculator app (requires PyInstaller)")
     c.set_defaults(func=cmd_calc)
 
     ide = sub.add_parser("ide", help="launch the offline desktop IDE",

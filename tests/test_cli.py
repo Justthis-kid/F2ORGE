@@ -1,6 +1,8 @@
 import json
 import xml.etree.ElementTree as ET
 
+import pytest
+
 from f2orge import Interpreter
 from f2orge.calculator import run_terminal_calculator
 from f2orge.repl import is_complete, run_shell
@@ -75,6 +77,18 @@ def test_graph_command_exports_browser_compatible_svg():
     assert len(polyline.attrib["points"].split()) == 3
 
 
+@pytest.mark.parametrize(("extension", "signature"), [(".png", b"\x89PNG\r\n\x1a\n"), (".pdf", b"%PDF-")])
+def test_graph_command_exports_raster_and_pdf_formats(extension, signature):
+    with TempDir() as directory:
+        output = directory / f"force{extension}"
+        result = forge(
+            "graph", "Force", "--vary", "a", "--from", "0", "--to", "20",
+            "--set", "m=150 kg", "--samples", "3", "-o", str(output), cwd=directory,
+        )
+        assert result.returncode == 0, result.stderr
+        assert output.read_bytes().startswith(signature)
+
+
 def test_graph_command_exports_multiple_curves_with_legend():
     with TempDir() as d:
         output = d / "forces.svg"
@@ -103,6 +117,18 @@ def test_graph_command_exports_offline_interactive_html():
     assert "Reset view" in page and 'data-series="0"' in page and 'data-series="1"' in page
     assert 'addEventListener("wheel",zoom' in page
     assert "pointerdown" in page and "https://" not in page and "<script src=" not in page
+
+
+def test_vector_plot_command_exports_interactive_html():
+    with TempDir() as directory:
+        source = directory / "vectors.forge"
+        output = directory / "plot.html"
+        source.write_text("time = <0 s, 1 s, 2 s>\nposition = <0 m, 3 m, 8 m>\n", encoding="utf-8")
+        result = forge("plot", str(source), "position", "--x", "time", "-o", str(output), cwd=directory)
+        assert result.returncode == 0, result.stderr
+        page = output.read_text(encoding="utf-8")
+        assert "position (m) vs time (s)" in page
+        assert "Reset view" in page and "pointerdown" in page
 
 
 def test_graph_command_rejects_mixed_curve_variables():

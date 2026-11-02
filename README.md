@@ -234,6 +234,13 @@ to export an offline HTML graph with zoom, pan, reset, and per-curve toggles:
 forge graph Force --vary a --from 0 --to 20 --curve "m=50 kg" --curve "m=100 kg" --interactive
 ```
 
+Choose PNG or PDF via `--format` or the output extension. These raster/document formats require
+Pillow (`pip install "f2orge[plots]"`). Add `--window` to open an interactive plot in a native
+desktop window. For MATLAB-style plotting of vectors produced by a script, use
+`forge plot FILE.forge Y --x X`; omit `--x` for sample indices. Add `-o graph.html` to export the
+interactive plot instead of opening a window. Native windows need the desktop extra and a supported
+system WebView.
+
 ### 7. Generate an offline calculator
 
 Turn a callable equation into a self-contained HTML app:
@@ -248,6 +255,9 @@ units are reported next to the fields. All calculations run locally in the page.
 
 For an interactive terminal version, run `forge calc Force --terminal` and enter assignments such
 as `m = 150 kg`. Outputs recalculate whenever you change an input; use `:help`, `:values`, or `:quit`.
+Use `forge calc Force --desktop` for a native desktop calculator window, or
+`forge calc Force --executable -o Force-calculator.exe` to build a standalone Windows app. These
+options require the desktop extra; executable generation also requires the build extra.
 
 ### 8. VS Code and tests
 
@@ -268,8 +278,9 @@ forge shell                          Start the interactive shell
 forge ide                            Launch the offline desktop editor
 forge check FILE...                  Parse and unit-check equation files
 forge doc EQUATION [-o FILE.md]      Generate equation documentation
-forge calc EQUATION [-o FILE.html]   Export an offline calculator; --terminal runs interactively
-forge graph EQUATION ...             Export an equation graph as SVG
+forge calc EQUATION [-o FILE.html]   Export an offline calculator; --desktop opens a window
+forge graph EQUATION ...             Export SVG, PNG, or PDF; --window opens an interactive plot
+forge plot FILE.forge Y [--x X]      Plot script vectors interactively or export HTML
 forge transpile FILE --target TARGET  Generate Python or C++ from a scalar script
 forge units [FILTER]                 List built-in units
 forge --version                      Print the installed version
@@ -300,8 +311,8 @@ not block a dependable language and solver.
 | Static SVG and interactive HTML graphing, sweeps, multiple curves | Initial implementation |
 | Offline HTML and terminal calculators, live recalculation, and unit validation | Initial implementation |
 | Python and C++ code generation for scalar scripts | Initial implementation; generated code uses SI numbers and omits unit checks |
-| PNG/PDF graph export and MATLAB-style interactive plot windows | Planned |
-| Generated native calculator forms and standalone desktop calculator apps | Planned |
+| PNG/PDF graph export and MATLAB-style interactive plot windows | Implemented |
+| Generated native calculator forms and standalone desktop calculator apps | Implemented |
 
 ### Advanced and long-term features
 
@@ -342,5 +353,6 @@ Source layout: `src/f2orge/` (`units.py` registry, `dimensions.py`, `quantity.py
 * `rad` and `deg` are dimensionless, so angular velocity in rad/s is the same dimension as 1/s.
 * Currencies, logarithmic units (dB) and `rpm` are not defined.
 * Graph export is an optional companion tool: it plots one callable equation output against one
-  declared input and writes SVG. Multiple curves vary a single additional input (up to 20 curves).
-  Native interactive plots, desktop calculators, matrices, and vectors are not implemented yet.
+  declared input; multiple curves vary a single additional input (up to 20 curves). Pillow is
+  needed only for PNG/PDF exports; native plot and calculator windows need the desktop extra.
+  Standalone calculator executables are currently Windows-only and require the build extra.

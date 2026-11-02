@@ -111,7 +111,7 @@ def _handler(session: DesktopSession):
                     state = _workspace(session)
                 self._json(200, {"success": True, **state})
                 return
-            if self.path not in ("/api/execute", "/api/transpile"):
+            if self.path not in ("/api/execute", "/api/transpile", "/api/plot"):
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
                 return
             if not self.headers.get("Content-Type", "").lower().startswith("application/json"):
@@ -123,9 +123,10 @@ def _handler(session: DesktopSession):
                     self._json(413, {"success": False, "output": "Request is too large"})
                     return
                 data = json.loads(self.rfile.read(size).decode("utf-8"))
-                source = data.get("source") if isinstance(data, dict) else None
+                field = "command" if self.path == "/api/plot" else "source"
+                source = data.get(field) if isinstance(data, dict) else None
                 if not isinstance(source, str):
-                    self._json(400, {"success": False, "output": "Expected a source string"})
+                    self._json(400, {"success": False, "output": f"Expected a {field} string"})
                     return
                 if self.path == "/api/transpile":
                     target = data.get("target")
@@ -144,6 +145,25 @@ def _handler(session: DesktopSession):
                     self._json(400, {"success": False, "output": err.format()})
                     return
                 self._json(200, {"success": True, "output": generated, "target": target})
+                return
+            if self.path == "/api/plot":
+                from .plot import render_svg
+
+                try:
+                    with session_lock:
+                        x_label, y_label, points = session.plot_data(source)
+                    title = f"{y_label} vs {x_label}"
+                    svg = render_svg(title, x_label, y_label, [("", points)])
+                except ForgeError as err:
+                    self._json(400, {"success": False, "output": err.format()})
+                    return
+                self._json(200, {
+                    "success": True,
+                    "title": title,
+                    "xLabel": x_label,
+                    "yLabel": y_label,
+                    "svg": svg,
+                })
                 return
             with session_lock:
                 output, success = session.execute(source)

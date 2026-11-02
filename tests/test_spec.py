@@ -1,7 +1,7 @@
 """One test per numbered feature of the F²ORGE feature list (the v1 core).
 
-Standalone calculator export and static graphing are companion tools; feature 41-45 is planned for
-later stages.
+Standalone calculator export and graphing are companion tools; advanced interactive worksheets and
+domain objects remain future features.
 """
 import json
 

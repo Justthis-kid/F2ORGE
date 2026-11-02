@@ -49,6 +49,50 @@
     }
   }
 
+  async function showPlot(command, label) {
+    try {
+      const result = await request("/api/plot", { command });
+      pushConsole(label, "command");
+      $("#plot-title").textContent = result.title;
+      const content = $("#plot-content");
+      content.innerHTML = result.svg;
+      const svg = content.querySelector("svg");
+      const originalViewBox = svg.getAttribute("viewBox");
+      let drag = null;
+      svg.addEventListener("wheel", (event) => {
+        event.preventDefault();
+        const box = svg.viewBox.baseVal;
+        const rect = svg.getBoundingClientRect();
+        const px = box.x + (event.clientX - rect.left) * box.width / rect.width;
+        const py = box.y + (event.clientY - rect.top) * box.height / rect.height;
+        const scale = event.deltaY < 0 ? 0.8 : 1.25;
+        svg.setAttribute("viewBox",
+          `${px - (px - box.x) * scale} ${py - (py - box.y) * scale} ${box.width * scale} ${box.height * scale}`);
+      }, { passive: false });
+      svg.addEventListener("pointerdown", (event) => {
+        if (event.button !== 0) return;
+        const box = svg.viewBox.baseVal;
+        drag = { x: event.clientX, y: event.clientY, left: box.x, top: box.y, width: box.width, height: box.height };
+        svg.classList.add("dragging");
+        svg.setPointerCapture(event.pointerId);
+      });
+      svg.addEventListener("pointermove", (event) => {
+        if (!drag) return;
+        const rect = svg.getBoundingClientRect();
+        const dx = (event.clientX - drag.x) * drag.width / rect.width;
+        const dy = (event.clientY - drag.y) * drag.height / rect.height;
+        svg.setAttribute("viewBox", `${drag.left - dx} ${drag.top - dy} ${drag.width} ${drag.height}`);
+      });
+      const stopDrag = () => { drag = null; svg.classList.remove("dragging"); };
+      svg.addEventListener("pointerup", stopDrag);
+      svg.addEventListener("pointercancel", stopDrag);
+      $("#reset-plot").onclick = () => svg.setAttribute("viewBox", originalViewBox);
+      $("#plot-dialog").showModal();
+    } catch (error) {
+      pushConsole(error.message, "error");
+    }
+  }
+
   function pushConsole(text, kind = "") {
     const welcome = consoleLog.querySelector(".console-welcome");
     if (welcome) welcome.remove();
@@ -725,8 +769,13 @@
     input.value = "";
     commandHistory.push(command);
     historyIndex = commandHistory.length;
+    if (/^plot(?:\s|\()/i.test(command)) {
+      await showPlot(command, `› ${command}`);
+      return;
+    }
     await runSource(command, `› ${command}`);
   });
+  $("#close-plot").addEventListener("click", () => $("#plot-dialog").close());
   editor.addEventListener("input", () => {
     if (currentFile) currentFile.dirty = true;
     updateDirty();

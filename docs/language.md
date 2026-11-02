@@ -221,8 +221,12 @@ with Ctrl+C.
 The language core does not depend on interactive graphs, generated calculators or live updates,
 domain objects (`rocket`, `motor`, `battery`), or interactive worksheets.
 Static SVG and interactive HTML graph export and standalone offline calculator export are optional
-companion tools; PNG/PDF export and MATLAB-style plot windows are future work. The native and
-loopback browser IDEs are initial implementations; an equation marketplace is not recommended for v1.
+companion tools. `forge graph` can also export PNG/PDF (install `f2orge[plots]`) or open an
+interactive native window (install `f2orge[desktop]`). `forge plot FILE.forge Y --x X` plots vectors
+from a script, with optional HTML export. Calculators support offline HTML, terminal, native-window,
+and standalone Windows executable output; the desktop extras are required for native windows, and
+the build extra is additionally required for an executable. The native and loopback browser IDEs are
+initial implementations; an equation marketplace is not recommended for v1.
 
 Simultaneous equation systems are not solved yet; each `solve` handles one chain of single-unknown
 relations.

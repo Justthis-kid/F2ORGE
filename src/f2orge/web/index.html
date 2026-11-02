@@ -145,6 +145,17 @@ force</textarea>
       </div>
     </form>
   </dialog>
+  <dialog id="plot-dialog" class="graph-dialog plot-dialog">
+    <header class="plot-dialog-header">
+      <div><p class="eyebrow">INTERACTIVE PLOT</p><h2 id="plot-title">Plot</h2></div>
+      <div class="dialog-actions plot-actions">
+        <button class="button subtle" type="button" id="reset-plot">Reset view</button>
+        <button class="button subtle" type="button" id="close-plot">Close</button>
+      </div>
+    </header>
+    <div id="plot-content" class="plot-content"></div>
+    <p class="plot-hint">Scroll to zoom · drag to pan</p>
+  </dialog>
   <script src="/app.js" defer></script>
 </body>
 </html>
