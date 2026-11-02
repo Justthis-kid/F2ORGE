@@ -185,11 +185,14 @@ window runs expressions and assignments in the same session, with Up/Down comman
 `plot(y)` or `plot(x, y)` on vector variables to open a native plot window. `:clear` resets the
 workspace. The IDE runs locally without an internet connection; the selected Python installation
 must include Tkinter. The **Blueprint** tab provides a graph-paper canvas with Input, Constant,
-Function, arithmetic, and Output nodes. Connect output pins to input pins, then select **Run Graph**
+Function, arithmetic, Script, and Output nodes. Connect output pins to input pins, then select **Run Graph**
 to compile the visual flow into F²ORGE statements and execute it in the shared workspace. Input
 nodes refer to variables already present in the workspace; Constant nodes accept F²ORGE
-expressions. Drag node bodies to reposition; select a node and use **Delete Node** or press Delete.
-Save graphs in `.fgraph` files. **Dark: On/Off** switches between light and a softer,
+expressions. Drag node headers to reposition and the lower-right corner to resize; double-click a
+node to edit it. Script nodes edit arbitrary F²ORGE statements. Matching Input and Output names
+show a confirmation before they share a variable, and dependent outputs are ordered automatically.
+Select a node and use **Delete Node** or press Delete. Save and reopen browser-compatible `.fgraph`
+files. **Dark: On/Off** switches between light and a softer,
 lower-contrast dark palette. Middle-drag to pan the graph canvas; use the mouse wheel to scroll.
 Syntax highlighting and code completion are not included yet.
 

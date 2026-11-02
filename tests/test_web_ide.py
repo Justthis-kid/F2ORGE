@@ -24,6 +24,8 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert "--accent: #dd7a35" in styles
             assert "--panel: #fcfaf5" in styles
             assert "--page: #111214" in styles
+            assert ".app-shell { border-radius: 8px; }" in styles
+            assert "linear-gradient(to right, transparent 99px, #d6cec2 100px)" in styles
         with urlopen(f"{base_url}/app.js") as response:
             script = response.read().decode("utf-8")
             assert response.status == 200 and "function compileGraph()" in script

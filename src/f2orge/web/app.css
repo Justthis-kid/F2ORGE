@@ -265,7 +265,13 @@ h1 { color: #37332e; }
 .canvas-wrap { border-color: #e1dbd2; border-radius: 9px; }
 .graph-canvas {
   background-color: #f5f1e9;
-  background-image: radial-gradient(circle, #d6cec2 1px, transparent 1.2px), radial-gradient(circle, #e9e3da 1px, transparent 1.2px);
+  background-image:
+    linear-gradient(to right, transparent 99px, #d6cec2 100px),
+    linear-gradient(to bottom, transparent 99px, #d6cec2 100px),
+    linear-gradient(to right, transparent 19px, #e9e3da 20px),
+    linear-gradient(to bottom, transparent 19px, #e9e3da 20px);
+  background-position: 0 0;
+  background-size: 100px 100px, 100px 100px, 20px 20px, 20px 20px;
 }
 .wire { stroke: #c9753c; }
 .wire.pending { stroke: #d29a5a; }
@@ -299,7 +305,14 @@ body.dark #editor { color: #c0c8ce; background: #191b1f; border-color: #353a40; 
 body.dark #editor:focus { border-color: #a56741; box-shadow: 0 0 0 3px #dd7a3518; }
 body.dark .output-content { color: #aab3bb; background: #191b1f; border-color: #353a40; }
 body.dark .canvas-wrap { border-color: #353a40; }
-body.dark .graph-canvas { background-color: #17191c; background-image: radial-gradient(circle, #393d42 1px, transparent 1.2px), radial-gradient(circle, #222529 1px, transparent 1.2px); }
+body.dark .graph-canvas {
+  background-color: #17191c;
+  background-image:
+    linear-gradient(to right, transparent 99px, #353a40 100px),
+    linear-gradient(to bottom, transparent 99px, #353a40 100px),
+    linear-gradient(to right, transparent 19px, #282c31 20px),
+    linear-gradient(to bottom, transparent 19px, #282c31 20px);
+}
 body.dark .wire { stroke: #c17a4c; }
 body.dark .wire.pending { stroke: #d19b61; }
 body.dark .node-card { background: #202327; border-color: #41464c; }
@@ -372,3 +385,17 @@ body.dark .node-shared { color: #f0c4a4; background: #57351f; }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition-duration: .01ms !important; }
 }
+
+/* Keep the IDE crisp and panel-like without making controls feel harsh. */
+.app-shell { border-radius: 8px; }
+.brand-mark, .button, .icon-button, .workspace-item, .value-mark,
+.language-chip, .output-content, #editor, .canvas-wrap, .node-card,
+.node-code, .graph-dialog, .dialog-mark, .graph-dialog textarea {
+  border-radius: 4px;
+}
+.node-head { border-radius: 3px 3px 0 0; }
+.graph-dialog { border-radius: 6px; }
+.button, .icon-button { border-radius: 4px; }
+.new-badge, .node-shared { border-radius: 3px; }
+.node-in, .node-out, .live-dot, .status-led, .local-badge span,
+.section-title i { border-radius: 50%; }

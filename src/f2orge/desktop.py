@@ -126,7 +126,9 @@ def launch_desktop_ide() -> None:
     wire_source: Optional[int] = None
     wire_mouse = (0.0, 0.0)
     dragging_node: Optional[int] = None
+    resizing_node: Optional[int] = None
     drag_origin: Optional[Tuple[float, float]] = None
+    size_origin: Optional[Tuple[float, float]] = None
     selected_node: Optional[int] = None
     grid_extent: Optional[Tuple[int, int, str]] = None
 
@@ -411,12 +413,34 @@ def launch_desktop_ide() -> None:
                                fill="#f3f4f6" if dark else "white",
                                font=("Segoe UI", 10, "bold"),
                                tags=("node", f"node:{node.id}"))
+            if node.kind in ("Input", "Output") and any(
+                other.id != node.id
+                and other.kind != node.kind
+                and other.value == node.value
+                for other in visual_graph.nodes.values()
+            ):
+                canvas.create_text(x + width - 10, y + 14, anchor="e", text="SHARED",
+                                   fill="#ffe3cb" if dark else "white",
+                                   font=("Segoe UI", 7, "bold"),
+                                   tags=("node", f"node:{node.id}"))
             value_text = (node.value.splitlines()[0][:24] + "…"
                           if node.kind == "Script" and node.value else node.value)
             value_text = value_text if value_text else "connect inputs"
             canvas.create_text(x + 10, y + 48, anchor="w", text=value_text,
                                fill=text_color, font=("Consolas", 10),
                                tags=("node", f"node:{node.id}"))
+            canvas.create_line(x + width - 13, y + height - 8,
+                               x + width - 8, y + height - 13,
+                               fill="#c1a68d" if not dark else "#8e7866",
+                               width=2, tags=("resize", f"resize:{node.id}"))
+            canvas.create_line(x + width - 8, y + height - 8,
+                               x + width - 8, y + height - 13,
+                               fill="#c1a68d" if not dark else "#8e7866",
+                               width=2, tags=("resize", f"resize:{node.id}"))
+            canvas.create_line(x + width - 8, y + height - 8,
+                               x + width - 13, y + height - 8,
+                               fill="#c1a68d" if not dark else "#8e7866",
+                               width=2, tags=("resize", f"resize:{node.id}"))
             for index in range(NODE_INPUTS[node.kind]):
                 py = y + 42 + index * 22
                 canvas.create_oval(x - 6, py - 6, x + 6, py + 6,
@@ -446,6 +470,52 @@ def launch_desktop_ide() -> None:
                                    dash=(5, 3), tags=("preview-wire",))
         canvas.tag_lower("grid")
 
+    def edit_script_text(title: str, initial_value: str) -> Optional[str]:
+        window = tk.Toplevel(root)
+        window.title(title)
+        window.transient(root)
+        window.resizable(True, True)
+        window.geometry("600x420")
+        result: List[Optional[str]] = [None]
+        ttk.Label(window, text="Write any valid F²ORGE statements.",
+                  padding=(12, 12, 12, 6)).pack(anchor="w")
+        script_editor = tk.Text(window, wrap="none", undo=True, font=("Consolas", 10),
+                                padx=10, pady=8)
+        script_editor.pack(fill="both", expand=True, padx=12)
+        script_editor.insert("1.0", initial_value)
+        actions = ttk.Frame(window, padding=12)
+        actions.pack(fill="x")
+
+        def finish(confirmed: bool) -> None:
+            if confirmed:
+                result[0] = script_editor.get("1.0", "end-1c")
+            window.destroy()
+
+        ttk.Button(actions, text="Cancel", command=lambda: finish(False)).pack(side="right")
+        ttk.Button(actions, text="Save script", command=lambda: finish(True),
+                   style="Accent.TButton").pack(side="right", padx=(0, 6))
+        window.protocol("WM_DELETE_WINDOW", lambda: finish(False))
+        window.grab_set()
+        script_editor.focus_set()
+        root.wait_window(window)
+        return result[0]
+
+    def confirm_shared_name(kind: str, value: str, exclude_id: Optional[int] = None) -> bool:
+        opposite = "Output" if kind == "Input" else "Input"
+        if not any(node.id != exclude_id and node.kind == opposite and node.value == value
+                   for node in visual_graph.nodes.values()):
+            return True
+        if kind == "Output":
+            detail = (f"An Input node already uses '{value}'. This Output assigns that variable, "
+                      "so dependent outputs will run after it.")
+        else:
+            detail = (f"An Output node already assigns '{value}'. This Input will read that "
+                      "variable, and the graph compiler will run its output first.")
+        return messagebox.askyesno(
+            "Share this variable?", f"{detail}\n\nContinue and share the variable?",
+            parent=root,
+        )
+
     def add_visual_node(kind: str) -> None:
         value = ""
         if kind in ("Input", "Output"):
@@ -463,6 +533,14 @@ def launch_desktop_ide() -> None:
                                            parent=root) or ""
             if not value:
                 return
+        elif kind == "Script":
+            value = edit_script_text("Add F²ORGE script", "# F²ORGE statements\n") or ""
+            if not value.strip():
+                return
+        value = value.strip()
+        if kind in ("Input", "Output") and not confirm_shared_name(kind, value):
+            set_status("Shared variable cancelled")
+            return
         try:
             index = len(visual_graph.nodes)
             visual_graph.add_node(kind, value, 100 + (index % 5) * 230, 100 + (index // 5) * 150)
@@ -472,7 +550,8 @@ def launch_desktop_ide() -> None:
             messagebox.showerror("Could not add node", err.message, parent=root)
 
     def visual_click(event) -> None:
-        nonlocal wire_source, dragging_node, drag_origin, wire_mouse, selected_node
+        nonlocal wire_source, dragging_node, resizing_node, drag_origin, size_origin
+        nonlocal wire_mouse, selected_node
         visual_canvas.focus_set()
         x, y = visual_canvas.canvasx(event.x), visual_canvas.canvasy(event.y)
         items = visual_canvas.find_overlapping(x - 3, y - 3, x + 3, y + 3)
@@ -480,18 +559,26 @@ def launch_desktop_ide() -> None:
         for tag in tags:
             parts = tag.split(":")
             try:
-                if parts[0] == "output":
+                if parts[0] == "resize" and len(parts) == 2:
+                    resizing_node = int(parts[1])
+                    selected_node = resizing_node
+                    node = visual_graph.nodes[resizing_node]
+                    drag_origin = (x, y)
+                    size_origin = (node.width, node.height)
+                    redraw_visual_graph()
+                    return
+                if parts[0] == "output" and len(parts) == 2:
                     wire_source = int(parts[1])
                     wire_mouse = (x, y)
                     redraw_visual_graph()
                     return
-                if parts[0] == "input" and wire_source is not None:
+                if parts[0] == "input" and len(parts) == 3 and wire_source is not None:
                     visual_graph.connect(wire_source, int(parts[1]), int(parts[2]))
                     wire_source = None
                     redraw_visual_graph()
                     set_status("Nodes connected")
                     return
-                if parts[0] == "node":
+                if parts[0] == "node" and len(parts) == 2:
                     dragging_node = int(parts[1])
                     selected_node = dragging_node
                     drag_origin = (x, y)
@@ -510,22 +597,32 @@ def launch_desktop_ide() -> None:
             redraw_visual_graph()
 
     def visual_drag(event) -> None:
-        nonlocal drag_origin, wire_mouse
+        nonlocal drag_origin, size_origin, wire_mouse
         x, y = visual_canvas.canvasx(event.x), visual_canvas.canvasy(event.y)
         if wire_source is not None:
             wire_mouse = (x, y)
             redraw_visual_graph()
+        elif resizing_node is not None and drag_origin is not None and size_origin is not None:
+            node = visual_graph.nodes[resizing_node]
+            node.width = min(900, max(150, size_origin[0] + x - drag_origin[0]))
+            node.height = min(
+                900,
+                max(88, 62 + NODE_INPUTS[node.kind] * 22, size_origin[1] + y - drag_origin[1]),
+            )
+            redraw_visual_graph()
         elif dragging_node is not None and drag_origin is not None:
             node = visual_graph.nodes[dragging_node]
-            node.x += x - drag_origin[0]
-            node.y += y - drag_origin[1]
+            node.x = max(0, node.x + x - drag_origin[0])
+            node.y = max(0, node.y + y - drag_origin[1])
             drag_origin = (x, y)
             redraw_visual_graph()
 
     def visual_release(_event) -> None:
-        nonlocal dragging_node, drag_origin
+        nonlocal dragging_node, resizing_node, drag_origin, size_origin
         dragging_node = None
+        resizing_node = None
         drag_origin = None
+        size_origin = None
 
     def visual_double_click(_event) -> None:
         x, y = visual_canvas.canvasx(_event.x), visual_canvas.canvasy(_event.y)
@@ -534,16 +631,27 @@ def launch_desktop_ide() -> None:
             for tag in visual_canvas.gettags(item):
                 if tag.startswith("node:"):
                     node = visual_graph.nodes[int(tag.split(":")[1])]
-                    if node.kind in ("Input", "Constant", "Output"):
-                        value = simpledialog.askstring(f"Edit {node.kind} node", "Value:", initialvalue=node.value,
-                                                       parent=root)
-                        if value:
-                            try:
-                                visual_graph._check_name(value, node.kind.lower()) if node.kind != "Constant" else None
-                                node.value = value
-                                redraw_visual_graph()
-                            except ForgeError as err:
-                                messagebox.showerror("Invalid node value", err.message, parent=root)
+                    if node.kind == "Script":
+                        value = edit_script_text("Edit F²ORGE script", node.value)
+                    elif node.kind in ("Input", "Constant", "Output"):
+                        value = simpledialog.askstring(
+                            f"Edit {node.kind} node", "Value:", initialvalue=node.value, parent=root
+                        )
+                    else:
+                        value = None
+                    if value is not None:
+                        try:
+                            value = value.strip()
+                            probe = VisualGraph()
+                            probe.add_node(node.kind, value)
+                            if node.kind in ("Input", "Output") and not confirm_shared_name(
+                                node.kind, value, exclude_id=node.id
+                            ):
+                                return
+                            node.value = value.strip()
+                            redraw_visual_graph()
+                        except ForgeError as err:
+                            messagebox.showerror("Invalid node value", err.message, parent=root)
                     break
 
     def delete_visual_node(_event=None) -> None:
@@ -734,7 +842,7 @@ def launch_desktop_ide() -> None:
 
     visual_toolbar = ttk.Frame(visual_tab, padding=6)
     visual_toolbar.pack(fill="x")
-    for kind in ("Input", "Constant", "Function", "Add", "Subtract", "Multiply", "Divide", "Power", "Output"):
+    for kind in ("Input", "Constant", "Function", "Script", "Add", "Subtract", "Multiply", "Divide", "Power", "Output"):
         ttk.Button(visual_toolbar, text=f"+ {kind}", command=lambda k=kind: add_visual_node(k)).pack(
             side="left", padx=(0, 4)
         )
@@ -743,7 +851,7 @@ def launch_desktop_ide() -> None:
     ttk.Button(visual_toolbar, text="Open Graph", command=open_visual_graph).pack(side="left", padx=4)
     ttk.Button(visual_toolbar, text="Save Graph", command=save_visual_graph).pack(side="left", padx=4)
     ttk.Button(visual_toolbar, text="Delete Node", command=delete_visual_node).pack(side="left", padx=4)
-    ttk.Label(visual_tab, text="Drag a node body to move it · select then Delete Node or press Delete · connect pins · middle-drag to pan").pack(
+    ttk.Label(visual_tab, text="Drag node headers to move · resize from the corner · double-click to edit · Delete removes the selected node · middle-drag to pan").pack(
         anchor="w", padx=8, pady=(0, 4)
     )
     graph_frame = ttk.Frame(visual_tab)
