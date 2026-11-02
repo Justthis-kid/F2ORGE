@@ -54,9 +54,8 @@ button { color: inherit; }
 }
 .brand { display: flex; align-items: center; gap: 10px; text-decoration: none; color: var(--ink); }
 .brand-mark {
-  width: 34px; height: 34px; display: grid; place-items: center;
-  color: #f7faf8; background: #617b73; border-radius: 9px;
-  font-family: Manrope, sans-serif; font-weight: 800; font-size: 13px;
+  width: 38px; height: 38px; display: block; flex: 0 0 38px;
+  object-fit: contain; background: transparent;
 }
 .brand strong { display: block; font: 800 13px Manrope, sans-serif; letter-spacing: .13em; }
 .brand small { display: block; margin-top: 2px; color: var(--muted); font: 500 8px "DM Mono", monospace; letter-spacing: .09em; }
@@ -118,6 +117,11 @@ kbd { margin-left: 9px; color: #dce7e2; font: 10px "DM Mono", monospace; }
 h1 { margin: 4px 0 0; color: #37434d; font: 600 19px Manrope, sans-serif; letter-spacing: -.025em; }
 .editor-tools { display: flex; align-items: center; gap: 12px; color: #a0a9af; font: 10px "DM Mono", monospace; }
 .language-chip { padding: 4px 6px; color: #6f887d; border: 1px solid #dce6e1; border-radius: 4px; background: #edf3f0; font-size: 9px; }
+.export-target { color: var(--muted); font: 10px "DM Mono", monospace; }
+#export-target {
+  min-height: 27px; padding: 0 7px; border: 1px solid var(--line); border-radius: 4px;
+  color: var(--ink); background: var(--panel); font-size: 10px;
+}
 #editor {
   width: 100%; flex: 1; min-height: 180px; resize: none; padding: 20px 21px;
   border: 1px solid #e0e4e6; border-radius: 7px; outline: none;
@@ -291,7 +295,7 @@ h1 { color: #37332e; }
 
 body.dark .app-shell { border-color: #30343a; }
 body.dark .sidebar { background: #191b1f; }
-body.dark .brand-mark { background: #bc642d; }
+body.dark .brand-mark { background: transparent; }
 body.dark .live-dot, body.dark .status-led, body.dark .local-badge span { background: #849587; }
 body.dark .button.primary { color: #fff8f2; background: #b85d29; border-color: #b85d29; }
 body.dark .button.primary:hover { background: #ca6c34; }
@@ -375,6 +379,14 @@ body.dark .prompt, body.dark .command-submit { color: #e39a67; }
   width: 100%; min-height: 180px; margin-top: 15px; padding: 10px;
   border: 1px solid var(--line); border-radius: 7px; color: var(--ink);
   background: var(--surface); font: 11px/1.6 "DM Mono", monospace;
+}
+.transpile-dialog { width: min(760px, calc(100vw - 32px)); }
+.transpile-dialog form { width: 100%; }
+.transpile-dialog .dialog-mark { overflow: hidden; background: transparent; }
+.transpile-dialog .dialog-mark img { width: 100%; height: 100%; object-fit: contain; }
+.transpile-note { max-width: 650px; }
+.transpile-dialog textarea {
+  min-height: min(54vh, 430px); resize: vertical; white-space: pre; overflow: auto;
 }
 .dialog-actions { width: 100%; margin-top: 23px; display: flex; justify-content: flex-end; gap: 8px; }
 body.dark .node-code { color: #c2b9ae; background: #191b1f; border-color: #41464c; }

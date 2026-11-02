@@ -17,6 +17,7 @@
   let commandHistory = [];
   let historyIndex = 0;
   let busy = false;
+  let generatedTarget = "python";
 
   const nodeInputs = {
     Input: 0, Constant: 0, Script: 0, Function: 1, Add: 2, Subtract: 2,
@@ -28,6 +29,24 @@
 
   function setStatus(message) {
     $("#graph-message").textContent = message;
+  }
+
+  async function convertScript() {
+    if (busy) return;
+    const target = $("#export-target").value;
+    $("#export-script").disabled = true;
+    try {
+      const result = await request("/api/transpile", { source: editor.value, target });
+      generatedTarget = target;
+      $("#transpile-title").textContent = `Generated ${target === "cpp" ? "C++" : "Python"}`;
+      $("#transpile-output").value = result.output;
+      $("#transpile-dialog").showModal();
+    } catch (error) {
+      pushConsole(error.message, "error");
+      $("#server-status").textContent = "Code conversion failed";
+    } finally {
+      $("#export-script").disabled = false;
+    }
   }
 
   function pushConsole(text, kind = "") {
@@ -47,7 +66,7 @@
 
   function setBusy(value) {
     busy = value;
-    for (const button of [$("#run-script"), $("#run-graph"), $(".command-submit")]) {
+    for (const button of [$("#run-script"), $("#run-graph"), $("#export-script"), $(".command-submit")]) {
       button.disabled = value;
     }
     $("#run-script").innerHTML = value ? "Running…" : '<span class="play-icon">▶</span> Run <kbd>Ctrl ↵</kbd>';
@@ -635,6 +654,22 @@
     catch (error) { setStatus(error.message); appendOutput(error.message, false); }
   });
   $("#save-file").addEventListener("click", saveScript);
+  $("#export-script").addEventListener("click", convertScript);
+  $("#download-transpiled").addEventListener("click", () => {
+    const sourceName = currentFile?.name || "Untitled.forge";
+    const baseName = sourceName.replace(/\.forge$/i, "").replace(/\.eq$/i, "");
+    const extension = generatedTarget === "cpp" ? "cpp" : "py";
+    const mime = generatedTarget === "cpp" ? "text/x-c++src" : "text/x-python";
+    download(`${baseName}.${extension}`, $("#transpile-output").value, `${mime};charset=utf-8`);
+  });
+  $("#copy-transpiled").addEventListener("click", async () => {
+    try {
+      await navigator.clipboard.writeText($("#transpile-output").value);
+      pushConsole("Generated code copied to clipboard");
+    } catch (error) {
+      pushConsole(`Could not copy generated code: ${error.message}`, "error");
+    }
+  });
   $("#open-file").addEventListener("click", () => {
     if (currentFile?.dirty && !window.confirm("Discard unsaved changes and open another file?")) return;
     $("#file-picker").click();

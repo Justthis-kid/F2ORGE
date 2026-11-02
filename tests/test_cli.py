@@ -48,7 +48,7 @@ def test_units_and_version_commands():
 
 def test_desktop_ide_command_is_available():
     result = forge("ide", "--help")
-    assert result.returncode == 0 and "native offline editor" in result.stdout
+    assert result.returncode == 0 and "embedded webview" in result.stdout
 
 
 def test_browser_ide_commands_are_available():

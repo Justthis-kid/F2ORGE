@@ -1,10 +1,14 @@
 import json
+import sys
 import threading
+from importlib.machinery import ModuleSpec
+from types import ModuleType
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from f2orge.desktop import DesktopSession
-from f2orge.web_ide import _LoopbackServer, _handler
+from f2orge.errors import ForgeError
+from f2orge.web_ide import _LoopbackServer, _handler, serve_desktop_ide
 
 
 def test_browser_ide_serves_offline_assets_and_local_kernel():
@@ -34,6 +38,27 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert 'node.kind === "Script"' in script
             assert "function startResize" in script
             assert "Share this variable?" in script
+
+        with urlopen(f"{base_url}/brand.svg") as response:
+            assert response.headers["Content-Type"].startswith("image/svg+xml")
+            assert "F²" in response.read().decode("utf-8")
+        payload = json.dumps({"source": "force = 150 kg * 9.81 m/s^2\nforce\n", "target": "python"}).encode("utf-8")
+        request = Request(f"{base_url}/api/transpile", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            result = json.loads(response.read())
+        assert result["success"] is True and result["target"] == "python"
+        assert "unit-safety checks are not retained" in result["output"]
+        assert "force = ((150.0 * 1.0) * (9.81 * 1.0))" in result["output"]
+
+        payload = json.dumps({"source": "eq Force { F = m * a }\n", "target": "cpp"}).encode("utf-8")
+        request = Request(f"{base_url}/api/transpile", payload, {"Content-Type": "application/json"})
+        try:
+            urlopen(request)
+        except HTTPError as error:
+            assert error.code == 400
+            assert "Cannot transpile" in json.loads(error.read())["output"]
+        else:
+            raise AssertionError("unsupported code should be rejected by the converter")
 
         payload = json.dumps({"source": "mass = 150 kg\nmass * 9.81 m/s^2"}).encode("utf-8")
         request = Request(f"{base_url}/api/execute", payload, {"Content-Type": "application/json"})
@@ -77,3 +102,75 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
         server.shutdown()
         server.server_close()
         thread.join(timeout=2)
+
+
+def test_desktop_ide_embeds_the_local_browser_ide(monkeypatch):
+    fake_webview = ModuleType("webview")
+    fake_webview.__spec__ = ModuleSpec("webview", loader=None, is_package=True)
+    fake_webview.__path__ = []
+    errors_module = ModuleType("webview.errors")
+    errors_module.__spec__ = ModuleSpec("webview.errors", loader=None)
+    state = {}
+
+    def create_window(title, url, **options):
+        state["url"] = url
+        state["window_options"] = (title, options)
+
+    def start():
+        with urlopen(state["url"]) as response:
+            page = response.read().decode("utf-8")
+        assert response.status == 200 and "F²ORGE" in page
+        assert state["window_options"] == (
+            "F²ORGE — Engineering IDE",
+            {"width": 1360, "height": 900, "min_size": (960, 640)},
+        )
+
+    fake_webview.create_window = create_window
+    fake_webview.start = start
+    errors_module.WebViewException = type("WebViewException", (Exception,), {})
+    fake_webview.errors = errors_module
+    monkeypatch.setitem(sys.modules, "webview", fake_webview)
+    monkeypatch.setitem(sys.modules, "webview.errors", errors_module)
+    serve_desktop_ide()
+
+
+def test_desktop_ide_reports_missing_webview_dependency(monkeypatch):
+    monkeypatch.setitem(sys.modules, "webview", None)
+    try:
+        serve_desktop_ide()
+    except ForgeError as error:
+        assert error.title == "Cannot start desktop IDE"
+        assert 'pip install "f2orge[desktop]"' in error.hint
+    else:
+        raise AssertionError("desktop IDE should report its missing webview dependency")
+
+
+def test_desktop_ide_reports_webview_startup_errors(monkeypatch):
+    class WebViewException(Exception):
+        pass
+
+    fake_webview = ModuleType("webview")
+    fake_webview.__spec__ = ModuleSpec("webview", loader=None, is_package=True)
+    fake_webview.__path__ = []
+    errors_module = ModuleType("webview.errors")
+    errors_module.__spec__ = ModuleSpec("webview.errors", loader=None)
+    errors_module.WebViewException = WebViewException
+    fake_webview.errors = errors_module
+
+    def create_window(*_args, **_kwargs):
+        return None
+
+    def start():
+        raise WebViewException("no supported runtime")
+
+    fake_webview.create_window = create_window
+    fake_webview.start = start
+    monkeypatch.setitem(sys.modules, "webview", fake_webview)
+    monkeypatch.setitem(sys.modules, "webview.errors", errors_module)
+    try:
+        serve_desktop_ide()
+    except ForgeError as error:
+        assert error.title == "Cannot start desktop IDE"
+        assert "no supported runtime" in error.message
+    else:
+        raise AssertionError("desktop IDE should report webview startup errors")

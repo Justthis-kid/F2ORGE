@@ -77,11 +77,15 @@ forge run examples/force.forge
 forge shell
 forge ide
 forge browser
+forge transpile examples/force.forge --target python -o force.py
+forge transpile examples/force.forge --target cpp -o force.cpp
 forge --help
 ```
 
-`forge ide` opens the native offline editor with a MATLAB-style workspace, script editor, command
-window, vector plotting, and a Blueprint canvas. The Blueprint tab uses a graph-paper grid: add
+`forge ide` opens the offline desktop IDE in an embedded webview, reusing the browser IDE UI and its
+MATLAB-style workspace, script editor, command window, and complete Blueprint canvas. Install the
+desktop webview dependency with `pip install "f2orge[desktop]"`; Windows needs the Microsoft
+WebView2 runtime. The Blueprint tab uses a graph-paper grid: add
 Input, Constant, Function, arithmetic, Output, and Script nodes. Drag node headers to reposition;
 drag a node’s lower-right corner to resize it. Select a node and choose **Delete Node** (or press
 Delete) to remove it. Connect output pins to input pins. A Script node accepts arbitrary F²ORGE
@@ -91,9 +95,30 @@ Input nodes reference workspace variables; an Input and Output sharing a name pr
 confirmation and orders dependent outputs automatically. Save and reopen `.fgraph` files.
 **Dark: On/Off** switches between light and a softer, lower-contrast dark palette. Pan the graph
 with the middle mouse button and scroll with the wheel. In the command window, use `plot(y)` or
-`plot(x, y)` for vectors. The desktop window requires Tkinter in your Python installation. On
-Windows, backslashes in file paths work too (for example
+`plot(x, y)` for vectors. The desktop window runs the bundled local IDE server on loopback and
+requires no internet access. On Windows, backslashes in file paths work too (for example
 `forge run examples\force.forge`).
+
+Use the **Convert to** selector in the IDE to generate and download Python or C++ from the current
+script. The same conversion is available from the CLI with `forge transpile FILE.forge --target
+python|cpp [-o OUTPUT]`. Conversion currently supports scalar assignments, arithmetic, scientific
+functions, constants, `print`, and `convert`. Unit literals and physical constants become SI
+numeric values; generated code does not retain F²ORGE's dimensional checks. Equation definitions,
+solves, imports, and vectors/matrices are rejected with a source-located explanation rather than
+silently altered.
+
+### Build a standalone Windows app
+
+On Windows, install the desktop and build extras, then run:
+
+```powershell
+python -m pip install -e ".[desktop,build]"
+python tools/build_windows.py
+```
+
+The generated `dist/F2ORGE.exe` is a windowed, one-file desktop app with the F²ORGE cube icon.
+It uses the installed Microsoft WebView2 runtime. Build it on Windows; the generated executable
+does not require a separate Python installation.
 If your system already uses the `forge` command (for example, Foundry), use `f2forge` in its place
 or launch F²ORGE as a Python module:
 
@@ -245,6 +270,7 @@ forge check FILE...                  Parse and unit-check equation files
 forge doc EQUATION [-o FILE.md]      Generate equation documentation
 forge calc EQUATION [-o FILE.html]   Export an offline calculator; --terminal runs interactively
 forge graph EQUATION ...             Export an equation graph as SVG
+forge transpile FILE --target TARGET  Generate Python or C++ from a scalar script
 forge units [FILTER]                 List built-in units
 forge --version                      Print the installed version
 ```
@@ -273,6 +299,7 @@ not block a dependable language and solver.
 |---|---|
 | Static SVG and interactive HTML graphing, sweeps, multiple curves | Initial implementation |
 | Offline HTML and terminal calculators, live recalculation, and unit validation | Initial implementation |
+| Python and C++ code generation for scalar scripts | Initial implementation; generated code uses SI numbers and omits unit checks |
 | PNG/PDF graph export and MATLAB-style interactive plot windows | Planned |
 | Generated native calculator forms and standalone desktop calculator apps | Planned |
 
@@ -282,7 +309,7 @@ not block a dependable language and solver.
 |---|---|
 | Vectors and matrices: arithmetic, products, transpose, inverse | Initial implementation; inverse is dimensionless-only |
 | Interactive engineering worksheets and domain objects (`rocket`, `motor`, `battery`) | Later |
-| Native offline desktop IDE and local browser IDE | Initial implementation |
+| Offline desktop IDE, browser IDE, and standalone Windows executable build | Initial implementation |
 | Equation marketplace | Later; not recommended for v1 |
 
 The full language is described in [docs/language.md](docs/language.md).

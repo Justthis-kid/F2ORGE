@@ -10,12 +10,14 @@ from typing import Dict
 from urllib.parse import urlsplit
 
 from .desktop import DesktopSession
+from .errors import ForgeError
 
 _ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
     "/index.html": ("index.html", "text/html; charset=utf-8"),
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
+    "/brand.svg": ("brand.svg", "image/svg+xml"),
 }
 
 
@@ -109,7 +111,7 @@ def _handler(session: DesktopSession):
                     state = _workspace(session)
                 self._json(200, {"success": True, **state})
                 return
-            if self.path != "/api/execute":
+            if self.path not in ("/api/execute", "/api/transpile"):
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
                 return
             if not self.headers.get("Content-Type", "").lower().startswith("application/json"):
@@ -125,8 +127,23 @@ def _handler(session: DesktopSession):
                 if not isinstance(source, str):
                     self._json(400, {"success": False, "output": "Expected a source string"})
                     return
+                if self.path == "/api/transpile":
+                    target = data.get("target")
+                    if target not in ("python", "cpp"):
+                        self._json(400, {"success": False, "output": "Target must be 'python' or 'cpp'"})
+                        return
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 self._json(400, {"success": False, "output": "Invalid JSON request"})
+                return
+            if self.path == "/api/transpile":
+                from .transpile import transpile
+
+                try:
+                    generated = transpile(source, target, "<IDE editor>")
+                except ForgeError as err:
+                    self._json(400, {"success": False, "output": err.format()})
+                    return
+                self._json(200, {"success": True, "output": generated, "target": target})
                 return
             with session_lock:
                 output, success = session.execute(source)
@@ -142,6 +159,45 @@ def _handler(session: DesktopSession):
 class _LoopbackServer(ThreadingHTTPServer):
     daemon_threads = True
     allow_reuse_address = True
+
+
+def serve_desktop_ide() -> None:
+    """Run the browser IDE in an embedded desktop webview on a local-only server."""
+    try:
+        import webview
+        from webview.errors import WebViewException
+    except ModuleNotFoundError as err:
+        if err.name != "webview":
+            raise
+        raise ForgeError(
+            "the desktop webview is not installed",
+            title="Cannot start desktop IDE",
+            hint='Install the desktop extra with: pip install "f2orge[desktop]".',
+        ) from err
+
+    server = _LoopbackServer(("127.0.0.1", 0), _handler(DesktopSession()))
+    server_thread = threading.Thread(target=server.serve_forever, daemon=True)
+    server_thread.start()
+    url = f"http://127.0.0.1:{server.server_port}/"
+    try:
+        webview.create_window(
+            "F²ORGE — Engineering IDE",
+            url,
+            width=1360,
+            height=900,
+            min_size=(960, 640),
+        )
+        webview.start()
+    except (OSError, RuntimeError, WebViewException) as err:
+        raise ForgeError(
+            f"cannot start the desktop webview: {err}",
+            title="Cannot start desktop IDE",
+            hint="Check that a supported WebView runtime is installed and available.",
+        ) from err
+    finally:
+        server.shutdown()
+        server.server_close()
+        server_thread.join(timeout=2)
 
 
 def serve_browser_ide(port: int = 8765, open_browser: bool = True) -> None:

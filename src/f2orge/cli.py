@@ -344,12 +344,33 @@ def cmd_calc(args) -> int:
 
 
 def cmd_ide(_args) -> int:
-    from .desktop import launch_desktop_ide
+    from .web_ide import serve_desktop_ide
 
     try:
-        launch_desktop_ide()
+        serve_desktop_ide()
     except ForgeError as err:
         _report(err)
+        return 1
+    return 0
+
+
+def cmd_transpile(args) -> int:
+    from .transpile import transpile
+
+    path = Path(args.file)
+    target = "cpp" if args.target == "c++" else args.target
+    try:
+        generated = transpile(path.read_text(encoding="utf-8-sig"), target, str(path))
+        if args.output:
+            Path(args.output).write_text(generated, encoding="utf-8")
+            print(f"Wrote {args.output}")
+        else:
+            sys.stdout.write(generated)
+    except ForgeError as err:
+        _report(err)
+        return 1
+    except OSError as err:
+        print(f"error: cannot transpile {path}: {err}", file=sys.stderr)
         return 1
     return 0
 
@@ -421,9 +442,16 @@ def build_parser() -> argparse.ArgumentParser:
                    help="run an interactive terminal calculator instead of writing HTML")
     c.set_defaults(func=cmd_calc)
 
-    ide = sub.add_parser("ide", help="launch the offline desktop editor",
-                         description="Launch the native offline editor. Tkinter is required.")
+    ide = sub.add_parser("ide", help="launch the offline desktop IDE",
+                         description="Launch the offline IDE in an embedded webview.")
     ide.set_defaults(func=cmd_ide)
+
+    transpile = sub.add_parser("transpile", help="convert a F²ORGE program to Python or C++")
+    transpile.add_argument("file", help="F²ORGE source file")
+    transpile.add_argument("--target", required=True, choices=("python", "cpp", "c++"),
+                           help="target language")
+    transpile.add_argument("-o", "--output", help="write generated code to a file")
+    transpile.set_defaults(func=cmd_transpile)
 
     browser = sub.add_parser(
         "browser", aliases=["web"], help="launch the local browser IDE",

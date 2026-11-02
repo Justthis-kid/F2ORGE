@@ -179,12 +179,15 @@ inputs change. Use `:help` for a reminder, `:values` to inspect current values, 
 
 ## Offline desktop IDE
 
-Run `forge ide` to open the native Tkinter editor. Open or save `.forge` and `.eq` files, then
+Run `forge ide` to open the offline desktop IDE, embedded in a native webview and sharing the
+browser IDE interface and Blueprint implementation. Install its optional dependency with
+`pip install "f2orge[desktop]"`; Windows also requires the Microsoft WebView2 runtime. Open or save
+`.forge` and `.eq` files, then
 press **Run** or **F5** to execute it. The workspace shows variables and equations; the command
 window runs expressions and assignments in the same session, with Up/Down command history. Use
 `plot(y)` or `plot(x, y)` on vector variables to open a native plot window. `:clear` resets the
-workspace. The IDE runs locally without an internet connection; the selected Python installation
-must include Tkinter. The **Blueprint** tab provides a graph-paper canvas with Input, Constant,
+workspace. The IDE serves its bundled UI on loopback and runs locally without an internet connection.
+The **Blueprint** tab provides a graph-paper canvas with Input, Constant,
 Function, arithmetic, Script, and Output nodes. Connect output pins to input pins, then select **Run Graph**
 to compile the visual flow into F²ORGE statements and execute it in the shared workspace. Input
 nodes refer to variables already present in the workspace; Constant nodes accept F²ORGE

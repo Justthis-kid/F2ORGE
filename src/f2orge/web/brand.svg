@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 100 100" role="img" aria-labelledby="title">
+  <title id="title">F²ORGE orange cube</title>
+  <path d="M50 7 94 30v40L50 95 6 72V31Z" fill="#c85f22" stroke="#a94d1c" stroke-width="2" stroke-linejoin="round"/>
+  <path d="m50 9 42 22-42 23L8 31Z" fill="#f3a05e" stroke="#ffc18a" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M8 31 50 54v39L8 71Z" fill="#d97835" stroke="#b65d28" stroke-width="2" stroke-linejoin="round"/>
+  <path d="M92 31 50 54v39l42-22Z" fill="#b95723" stroke="#a94d1c" stroke-width="2" stroke-linejoin="round"/>
+  <text x="16" y="58" transform="matrix(1 .48 0 1 0 -7)" fill="#fff7ed" font-family="Segoe UI,Arial,sans-serif" font-size="21" font-weight="800" letter-spacing="-1">F²</text>
+</svg>

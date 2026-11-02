@@ -11,7 +11,7 @@
   <div class="app-shell">
     <header class="topbar">
       <a class="brand" href="#" aria-label="F²ORGE home">
-        <span class="brand-mark">F²</span>
+        <img class="brand-mark" src="/brand.svg" alt="">
         <span><strong>FORGE</strong><small>ENGINEERING WORKSPACE</small></span>
       </a>
       <div class="project-title"><span class="live-dot"></span><span id="project-name">Untitled.forge</span><span id="dirty-mark"></span></div>
@@ -47,7 +47,16 @@
         <section id="script-panel" class="panel active">
           <div class="editor-heading">
             <div><span class="eyebrow">PROGRAM</span><h1>Script editor</h1></div>
-            <div class="editor-tools"><span class="language-chip">F²ORGE</span><span id="line-count">1 line</span></div>
+            <div class="editor-tools">
+              <span class="language-chip">F²ORGE</span>
+              <span id="line-count">1 line</span>
+              <label class="export-target" for="export-target">Convert to</label>
+              <select id="export-target" aria-label="Conversion target">
+                <option value="python">Python</option>
+                <option value="cpp">C++</option>
+              </select>
+              <button id="export-script" class="button subtle compact">Convert</button>
+            </div>
           </div>
           <textarea id="editor" spellcheck="false" aria-label="F²ORGE program editor" autocomplete="off" autocapitalize="off">import Force
 
@@ -119,6 +128,20 @@ force</textarea>
       <div class="dialog-actions">
         <button class="button subtle" value="cancel" id="graph-dialog-cancel">Cancel</button>
         <button class="button primary" value="confirm" id="graph-dialog-confirm">Continue</button>
+      </div>
+    </form>
+  </dialog>
+  <dialog id="transpile-dialog" class="graph-dialog transpile-dialog">
+    <form method="dialog">
+      <div class="dialog-mark"><img src="/brand.svg" alt=""></div>
+      <p class="eyebrow">CODE GENERATION</p>
+      <h2 id="transpile-title">Generated Python</h2>
+      <p class="transpile-note">Unit literals are converted to SI numbers. Generated code does not retain F²ORGE unit-safety checks.</p>
+      <textarea id="transpile-output" spellcheck="false" aria-label="Generated code"></textarea>
+      <div class="dialog-actions">
+        <button class="button subtle" value="close">Close</button>
+        <button class="button subtle" type="button" id="copy-transpiled">Copy</button>
+        <button class="button primary" type="button" id="download-transpiled">Download</button>
       </div>
     </form>
   </dialog>
