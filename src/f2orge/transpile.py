@@ -1,4 +1,4 @@
-"""Translate the scalar F²ORGE language subset to standalone Python or C++.
+"""Translate the scalar F²ORGE language subset to Python, C++, MicroPython, or TI-84 BASIC.
 
 Unit literals and built-in physical constants are lowered to coherent SI magnitudes. Generated
 programs are numerical code; they do not retain F²ORGE's runtime dimensional-safety checks.
@@ -32,6 +32,7 @@ _FUNCTIONS = {
     "sin", "cos", "tan", "asin", "acos", "atan", "atan2", "exp", "ln", "log",
     "sqrt", "abs", "min", "max",
 }
+_TI_VARIABLES = "ABCDEFGHIJKLMNOPQRSTUVWXYZθ"
 
 
 class TranspileError(ForgeError):
@@ -47,27 +48,99 @@ class _Generator:
     def __post_init__(self) -> None:
         self.assigned: Set[str] = set()
         self.used_constants: Set[str] = set()
+        self.variable_names: List[str] = []
+        self.variable_map: Dict[str, str] = {}
+
+    @property
+    def is_python(self) -> bool:
+        return self.target in ("python", "micropython")
+
+    @property
+    def is_cpp(self) -> bool:
+        return self.target == "cpp"
+
+    @property
+    def is_ti_basic(self) -> bool:
+        return self.target == "ti-basic"
 
     def identifier(self, name: str) -> str:
-        if self.target == "python":
+        if self.is_ti_basic:
+            return self.variable_map[name]
+        if self.is_python:
             return f"f2orge_{name}" if keyword.iskeyword(name) or name == "math" or name.startswith("f2orge_") else name
         return f"f2orge_{name}" if name in _CPP_KEYWORDS or name in {"std", "main", "cout"} else name
+
+    def prepare_ti_variables(self, statements: List[object]) -> None:
+        assigned_names = {
+            statement.name for statement in statements if isinstance(statement, S.Assign)
+        }
+        if any(isinstance(statement, (S.ExprStmt, S.Convert)) for statement in statements):
+            assigned_names.add("ans")
+
+        def remember(name: str) -> None:
+            if name in assigned_names or name not in CONSTANTS:
+                if name not in self.variable_names:
+                    self.variable_names.append(name)
+
+        for statement in statements:
+            if isinstance(statement, S.Assign):
+                remember(statement.name)
+                for node in S.walk(statement.expr):
+                    if isinstance(node, S.Name):
+                        remember(node.name)
+            elif isinstance(statement, (S.ExprStmt, S.Convert)):
+                remember("ans")
+                expression = statement.expr
+                for node in S.walk(expression):
+                    if isinstance(node, S.Name):
+                        remember(node.name)
+            elif isinstance(statement, S.Print):
+                for expression in statement.items:
+                    for node in S.walk(expression):
+                        if isinstance(node, S.Name):
+                            remember(node.name)
+        if len(self.variable_names) > len(_TI_VARIABLES):
+            raise TranspileError(
+                f"TI-84 BASIC supports at most {len(_TI_VARIABLES)} scalar variables in this converter",
+                hint="Reduce the number of distinct variables or use MicroPython instead.",
+            )
+        self.variable_map = {
+            name: _TI_VARIABLES[index] for index, name in enumerate(self.variable_names)
+        }
+
+    def ti_name(self, name: str) -> str:
+        if name == "theta":
+            return "θ"
+        return self.identifier(name)
 
     def expression(self, node: object) -> str:
         if isinstance(node, S.Number):
             return _number(node.value)
         if isinstance(node, S.QuantityLit):
+            if self.is_ti_basic and node.unit.scale == 1 and node.unit.offset == 0:
+                return _number(node.value)
             magnitude = _number(node.value)
             scaled = f"({magnitude} * {_number(node.unit.scale)})"
             if node.unit.offset:
                 return f"({scaled} + {_number(node.unit.offset)})"
             return scaled
         if isinstance(node, S.StringLit):
-            return repr(node.value) if self.target == "python" else json.dumps(node.value, ensure_ascii=False)
+            if self.is_ti_basic:
+                if '"' in node.value or any(ord(char) < 32 for char in node.value):
+                    raise TranspileError(
+                        "TI-84 BASIC strings cannot contain quotes or control characters",
+                        node.span,
+                    )
+                return f'"{node.value}"'
+            return repr(node.value) if self.is_python else json.dumps(node.value, ensure_ascii=False)
         if isinstance(node, S.Name):
             if node.name in self.assigned:
                 return self.identifier(node.name)
             if node.name in CONSTANTS:
+                if self.is_ti_basic:
+                    if node.name == "pi":
+                        return "π"
+                    return _number(CONSTANTS[node.name].value)
                 self.used_constants.add(node.name)
                 return _constant_identifier(node.name)
             return self.identifier(node.name)
@@ -76,7 +149,11 @@ class _Generator:
         if isinstance(node, S.Binary):
             left, right = self.expression(node.left), self.expression(node.right)
             if node.op == "^":
-                return f"({left} ** {right})" if self.target == "python" else f"std::pow({left}, {right})"
+                if self.is_python:
+                    return f"({left} ** {right})"
+                if self.is_cpp:
+                    return f"std::pow({left}, {right})"
+                return f"({left}^{right})"
             return f"({left} {node.op} {right})"
         if isinstance(node, S.Call):
             if node.func not in _FUNCTIONS:
@@ -90,7 +167,26 @@ class _Generator:
             args = [self.expression(arg) for arg in node.args]
             if node.func in ("min", "max") and len(args) < 2:
                 raise TranspileError(f"{node.func}() needs at least two arguments", node.span)
-            if self.target == "python":
+            if self.is_ti_basic:
+                if node.func == "atan2":
+                    raise TranspileError(
+                        "atan2() is not supported by TI-84 BASIC code generation",
+                        node.span,
+                        hint="Use MicroPython or rewrite this expression for the calculator.",
+                    )
+                if node.func in ("min", "max"):
+                    result = args[0]
+                    for arg in args[1:]:
+                        result = f"{node.func}({result},{arg})"
+                    return result
+                function = {
+                    "asin": "sin⁻¹", "acos": "cos⁻¹", "atan": "tan⁻¹",
+                    "exp": "e^", "sqrt": "√", "abs": "abs", "ln": "ln", "log": "log",
+                }.get(node.func, node.func)
+                return f"{function}({args[0]})"
+            if self.is_python:
+                if self.target == "micropython" and node.func == "log":
+                    return f"(math.log({args[0]}) / math.log(10))"
                 function = {"ln": "log", "log": "log10"}.get(node.func, node.func)
                 if function not in ("min", "max", "abs"):
                     function = f"math.{function}"
@@ -113,16 +209,22 @@ class _Generator:
         if isinstance(node, S.Assign):
             value = self.expression(node.expr)
             self.assigned.add(node.name)
+            if self.is_ti_basic:
+                return [f"{value}→{self.identifier(node.name)}"]
             terminator = ";" if self.target == "cpp" else ""
             return [f"{self.identifier(node.name)} = {value}{terminator}"]
         if isinstance(node, S.ExprStmt):
             value = self.expression(node.expr)
             self.assigned.add("ans")
+            if self.is_ti_basic:
+                return [f"{value}→{self.identifier('ans')}", f"Disp {self.identifier('ans')}"]
             terminator = ";" if self.target == "cpp" else ""
             return [f"ans = {value}{terminator}", self.print_value("ans")]
         if isinstance(node, S.Print):
             values = [self.expression(item) for item in node.items]
-            if self.target == "python":
+            if self.is_ti_basic:
+                return [f"Disp {', '.join(values)}"]
+            if self.is_python:
                 return [f"print({', '.join(values)})"]
             return [("std::cout << " + ' << " " << '.join(values) + " << '\\n';")
                     if values else 'std::cout << "\\n";']
@@ -131,8 +233,15 @@ class _Generator:
             scale = _number(node.unit.scale)
             converted = f"(({value} - {_number(node.unit.offset)}) / {scale})"
             self.assigned.add("ans")
+            if self.is_ti_basic:
+                converted = f"({value}/{scale})" if node.unit.offset == 0 else converted
+                statements = [f"{converted}→{self.identifier('ans')}", f"Disp {self.identifier('ans')}"]
+                symbol = node.unit.symbol(True)
+                if symbol:
+                    statements.append(f'Disp "{symbol}"')
+                return statements
             terminator = ";" if self.target == "cpp" else ""
-            if self.target == "python":
+            if self.is_python:
                 suffix = f" {node.unit.symbol(True)}" if node.unit.symbol(True) else ""
                 return [f"ans = {converted}", f'print(f"{{ans:g}}{suffix}")']
             suffix = f" {node.unit.symbol(True)}" if node.unit.symbol(True) else ""
@@ -147,7 +256,9 @@ class _Generator:
         )
 
     def print_value(self, value: str) -> str:
-        return f"print({value})" if self.target == "python" else f"std::cout << {value} << '\\n';"
+        if self.is_python:
+            return f"print({value})"
+        return f"std::cout << {value} << '\\n';"
 
 
 def _number(value: float) -> str:
@@ -163,7 +274,7 @@ def _constants(generator: _Generator, names: Iterable[str]) -> List[str]:
     for name in sorted(names):
         value = CONSTANTS[name].value
         identifier = _constant_identifier(name)
-        if generator.target == "python":
+        if generator.is_python:
             lines.append(f"{identifier} = {_number(value)}")
         else:
             lines.append(f"constexpr double {identifier} = {_number(value)};")
@@ -171,20 +282,42 @@ def _constants(generator: _Generator, names: Iterable[str]) -> List[str]:
 
 
 def transpile(source: str, target: str, filename: str = "<string>") -> str:
-    """Translate a supported F²ORGE program to Python or C++ source."""
-    if target not in ("python", "cpp"):
-        raise ValueError("target must be 'python' or 'cpp'")
+    """Translate a supported scalar F²ORGE program to a target-language source file."""
+    aliases = {
+        "c++": "cpp", "micro-py": "micropython", "micro_py": "micropython",
+        "ti84": "ti-basic", "ti-84": "ti-basic", "ti84-basic": "ti-basic",
+        "ti-84-basic": "ti-basic",
+    }
+    target = aliases.get(target.lower(), target.lower())
+    if target not in ("python", "micropython", "cpp", "ti-basic"):
+        raise ValueError("target must be 'python', 'micropython', 'cpp', or 'ti-basic'")
 
     statements = parse(Source(filename, source))
     generator = _Generator(target)
+    if generator.is_ti_basic:
+        generator.prepare_ti_variables(statements)
     body: List[str] = []
     for statement in statements:
         body.extend(generator.statement(statement))
 
+    if generator.is_ti_basic:
+        code = [
+            ":ClrHome",
+            ":If 0:Then",
+            ':Disp "TI-BASIC variable map"',
+        ]
+        code.extend(
+            f':Disp "{identifier}={name}"'
+            for name, identifier in generator.variable_map.items()
+            if len(name) != 1
+        )
+        code.extend([":End", *[f":{line}" for line in body]])
+        return "\n".join(code) + "\n"
+
     header = [
         "# Generated by F²ORGE. Quantities are numeric SI magnitudes; unit-safety checks are not retained."
     ]
-    if target == "python":
+    if generator.is_python:
         code = header + ["import math"] + _constants(generator, generator.used_constants)
         if body:
             code.extend(["", *body])

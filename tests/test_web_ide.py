@@ -20,6 +20,7 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
         with urlopen(f"{base_url}/") as response:
             page = response.read().decode("utf-8")
             assert response.status == 200 and "F²ORGE" in page
+            assert 'value="micropython"' in page and 'value="ti-basic"' in page
             assert response.headers["Content-Security-Policy"]
         with urlopen(f"{base_url}/app.css") as response:
             styles = response.read().decode("utf-8")
@@ -50,6 +51,20 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
         assert result["success"] is True and result["target"] == "python"
         assert "unit-safety checks are not retained" in result["output"]
         assert "force = ((150.0 * 1.0) * (9.81 * 1.0))" in result["output"]
+
+        for target, expected in (
+            ("micropython", "import math"),
+            ("ti-basic", ":ClrHome"),
+        ):
+            payload = json.dumps({
+                "source": "value = sqrt(9)\nvalue\n",
+                "target": target,
+            }).encode("utf-8")
+            request = Request(f"{base_url}/api/transpile", payload, {"Content-Type": "application/json"})
+            with urlopen(request) as response:
+                result = json.loads(response.read())
+            assert result["success"] is True and result["target"] == target
+            assert expected in result["output"]
 
         payload = json.dumps({
             "source": "time = <0 s, 1 s, 2 s>\nposition = <0 m, 3 m, 8 m>\n",

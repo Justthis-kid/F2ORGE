@@ -130,8 +130,11 @@ def _handler(session: DesktopSession):
                     return
                 if self.path == "/api/transpile":
                     target = data.get("target")
-                    if target not in ("python", "cpp"):
-                        self._json(400, {"success": False, "output": "Target must be 'python' or 'cpp'"})
+                    if target not in ("python", "micropython", "cpp", "ti-basic"):
+                        self._json(
+                            400,
+                            {"success": False, "output": "Choose Python, C++, MicroPython, or TI-84 BASIC"},
+                        )
                         return
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 self._json(400, {"success": False, "output": "Invalid JSON request"})

@@ -439,9 +439,8 @@ def cmd_transpile(args) -> int:
     from .transpile import transpile
 
     path = Path(args.file)
-    target = "cpp" if args.target == "c++" else args.target
     try:
-        generated = transpile(path.read_text(encoding="utf-8-sig"), target, str(path))
+        generated = transpile(path.read_text(encoding="utf-8-sig"), args.target, str(path))
         if args.output:
             Path(args.output).write_text(generated, encoding="utf-8")
             print(f"Wrote {args.output}")
@@ -540,9 +539,25 @@ def build_parser() -> argparse.ArgumentParser:
                          description="Launch the offline IDE in an embedded webview.")
     ide.set_defaults(func=cmd_ide)
 
-    transpile = sub.add_parser("transpile", help="convert a F²ORGE program to Python or C++")
+    transpile = sub.add_parser(
+                           "transpile", help="convert a F²ORGE program to Python, C++, MicroPython, or TI-84 BASIC"
+    )
     transpile.add_argument("file", help="F²ORGE source file")
-    transpile.add_argument("--target", required=True, choices=("python", "cpp", "c++"),
+    transpile.add_argument(
+                           "--target", required=True,
+                           choices=(
+                               "python",
+                               "micropython",
+                               "micro-py",
+                               "micro_py",
+                               "cpp",
+                               "c++",
+                               "ti-basic",
+                               "ti84",
+                               "ti-84",
+                               "ti84-basic",
+                               "ti-84-basic",
+                           ),
                            help="target language")
     transpile.add_argument("-o", "--output", help="write generated code to a file")
     transpile.set_defaults(func=cmd_transpile)

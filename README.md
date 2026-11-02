@@ -79,6 +79,8 @@ forge ide
 forge browser
 forge transpile examples/force.forge --target python -o force.py
 forge transpile examples/force.forge --target cpp -o force.cpp
+forge transpile examples/force.forge --target micropython -o force-mpy.py
+forge transpile examples/force.forge --target ti-basic -o force.ti.txt
 forge --help
 ```
 
@@ -99,13 +101,19 @@ with the middle mouse button and scroll with the wheel. In the command window, u
 requires no internet access. On Windows, backslashes in file paths work too (for example
 `forge run examples\force.forge`).
 
-Use the **Convert to** selector in the IDE to generate and download Python or C++ from the current
-script. The same conversion is available from the CLI with `forge transpile FILE.forge --target
-python|cpp [-o OUTPUT]`. Conversion currently supports scalar assignments, arithmetic, scientific
-functions, constants, `print`, and `convert`. Unit literals and physical constants become SI
-numeric values; generated code does not retain F²ORGE's dimensional checks. Equation definitions,
-solves, imports, and vectors/matrices are rejected with a source-located explanation rather than
-silently altered.
+Use the **Convert to** selector in the IDE to generate and download Python, C++, MicroPython, or
+TI-84 BASIC from the current script. The same conversion is available from the CLI with
+`forge transpile FILE.forge --target python|cpp|micropython|ti-basic [-o OUTPUT]`. Conversion
+currently supports scalar assignments, arithmetic, scientific functions, constants, `print`, and
+`convert`. Unit literals and physical constants become SI numeric values; generated code does not
+retain F²ORGE's dimensional checks. Equation definitions, solves, imports, and vectors/matrices are
+rejected with a source-located explanation rather than silently altered. MicroPython output uses
+only `math` and built-ins, including a portable base-10 logarithm expression, and targets the
+standard MicroPython language subset. TI-84 BASIC output is readable source for the TI-84/Plus/Plus CE
+calculator BASIC language; it maps F²ORGE names to the calculator's 27 scalar variables and adds a
+non-running variable map. The `.ti.txt` file is source text, not a tokenized `.8xp` calculator
+program; use a TI-compatible editor/transfer tool to enter or tokenize it. `atan2` and more than 27
+distinct scalar variables are not supported by the TI-BASIC target.
 
 ### Build a standalone Windows app
 
@@ -281,7 +289,7 @@ forge doc EQUATION [-o FILE.md]      Generate equation documentation
 forge calc EQUATION [-o FILE.html]   Export an offline calculator; --desktop opens a window
 forge graph EQUATION ...             Export SVG, PNG, or PDF; --window opens an interactive plot
 forge plot FILE.forge Y [--x X]      Plot script vectors interactively or export HTML
-forge transpile FILE --target TARGET  Generate Python or C++ from a scalar script
+forge transpile FILE --target TARGET  Generate Python, C++, MicroPython, or TI-84 BASIC
 forge units [FILTER]                 List built-in units
 forge --version                      Print the installed version
 ```
@@ -310,7 +318,7 @@ not block a dependable language and solver.
 |---|---|
 | Static SVG and interactive HTML graphing, sweeps, multiple curves | Initial implementation |
 | Offline HTML and terminal calculators, live recalculation, and unit validation | Initial implementation |
-| Python and C++ code generation for scalar scripts | Initial implementation; generated code uses SI numbers and omits unit checks |
+| Python, C++, MicroPython, and TI-84 BASIC generation for scalar scripts | Initial implementation; generated code uses SI numbers and omits unit checks |
 | PNG/PDF graph export and MATLAB-style interactive plot windows | Implemented |
 | Generated native calculator forms and standalone desktop calculator apps | Implemented |
 

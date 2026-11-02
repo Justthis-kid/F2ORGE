@@ -34,11 +34,17 @@
   async function convertScript() {
     if (busy) return;
     const target = $("#export-target").value;
+    const targetLabel = {
+      python: "Python",
+      micropython: "MicroPython",
+      cpp: "C++",
+      "ti-basic": "TI-84 BASIC",
+    }[target];
     $("#export-script").disabled = true;
     try {
       const result = await request("/api/transpile", { source: editor.value, target });
       generatedTarget = target;
-      $("#transpile-title").textContent = `Generated ${target === "cpp" ? "C++" : "Python"}`;
+      $("#transpile-title").textContent = `Generated ${targetLabel}`;
       $("#transpile-output").value = result.output;
       $("#transpile-dialog").showModal();
     } catch (error) {
@@ -702,8 +708,13 @@
   $("#download-transpiled").addEventListener("click", () => {
     const sourceName = currentFile?.name || "Untitled.forge";
     const baseName = sourceName.replace(/\.forge$/i, "").replace(/\.eq$/i, "");
-    const extension = generatedTarget === "cpp" ? "cpp" : "py";
-    const mime = generatedTarget === "cpp" ? "text/x-c++src" : "text/x-python";
+    const extension = {
+      cpp: "cpp",
+      "ti-basic": "ti.txt",
+      micropython: "py",
+      python: "py",
+    }[generatedTarget];
+    const mime = generatedTarget === "cpp" ? "text/x-c++src" : "text/plain";
     download(`${baseName}.${extension}`, $("#transpile-output").value, `${mime};charset=utf-8`);
   });
   $("#copy-transpiled").addEventListener("click", async () => {
