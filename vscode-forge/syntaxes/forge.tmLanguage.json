@@ -54,7 +54,7 @@
     },
     "functions": {
       "name": "support.function.builtin.forge",
-      "match": "\\b(sin|cos|tan|asin|acos|atan|atan2|exp|ln|log|sqrt|abs|min|max)(?=\\s*\\()"
+      "match": "\\b(sin|cos|tan|asin|acos|atan|atan2|exp|ln|log|sqrt|abs|min|max|inverse|transpose)(?=\\s*\\()"
     },
     "constants": {
       "name": "support.constant.forge",
@@ -69,7 +69,7 @@
     },
     "operators": {
       "name": "keyword.operator.forge",
-      "match": "->|[-+*/^=×·÷→]"
+      "match": "->|[-+*/^=<>\\[\\]×·÷→]"
     }
   }
 }

@@ -22,7 +22,7 @@ f2forge = "f2orge.cli:main"            # same thing; use this if another tool al
 where = ["src"]
 
 [tool.setuptools.package-data]
-f2orge = ["stdlib/*.eq"]
+f2orge = ["stdlib/*.eq", "web/*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src"]

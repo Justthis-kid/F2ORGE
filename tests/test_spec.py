@@ -1,6 +1,7 @@
 """One test per numbered feature of the F²ORGE feature list (the v1 core).
 
-Features 19-31 (calculator, graphing, matrices) and 41-45 are planned for later stages.
+Standalone calculator export and static graphing are companion tools; feature 41-45 is planned for
+later stages.
 """
 import json
 
@@ -115,6 +116,22 @@ def test_15_equation_packages():
         assert it.variables["x"].value == pytest.approx(expected, rel=1e-12)
 
 
+def test_15_standard_library_covers_mechanics_fluids_and_electrical_basics():
+    cases = [
+        ("Work", "Work(F = 10 N, d = 3 m, theta = 0 rad)", "30 J"),
+        ("Power", "Power(E = 120 J, t = 10 s)", "12 W"),
+        ("Momentum", "Momentum(m = 2 kg, v = 3 m/s)", "6 kg*m/s"),
+        ("Density", "Density(m = 2 kg, V = 1 m^3)", "2 kg/m³"),
+        ("PressureFromForce", "PressureFromForce(F = 10 N, A = 2 m^2)", "5 Pa"),
+        ("HydrostaticPressure", "HydrostaticPressure(rho = 1000 kg/m^3, h = 2 m)", "19613.3 Pa"),
+        ("SpringForce", "SpringForce(k = 100 N/m, x = 0.05 m)", "5 N"),
+        ("ElectricalPower", "ElectricalPower(V = 12 V, I = 2 A)", "24 W"),
+        ("CapacitorEnergy", "CapacitorEnergy(C = 2 uF, V = 12 V)", "0.000144 J"),
+    ]
+    for name, call, expected in cases:
+        assert run(f"import {name}\n{call}") == [expected]
+
+
 def test_16_solve_for_variable():
     out = run("""eq Force { F = m * a }
 solve Force for a {
@@ -187,3 +204,9 @@ def test_38_local_first_no_third_party_dependencies():
     import re
     text = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     assert re.search(r"^dependencies\s*=\s*\[\s*\]", text, re.M)
+
+
+def test_28_to_30_vectors_and_matrices():
+    assert run("v = <1, 2, 3>\ntranspose([[1, 2], [3, 4]])") == [
+        "[[1, 3], [2, 4]]",
+    ]

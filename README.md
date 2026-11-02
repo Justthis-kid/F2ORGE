@@ -1,7 +1,7 @@
 # F²ORGE (Formula Forge)
 
 A unit-safe engineering programming language where reusable equations become solvers, documentation,
-and portable graphs (interactive calculators are next). Everything is local files: no cloud, no
+portable graphs, and standalone offline calculators. Everything is local files: no cloud, no
 accounts, no database, and **no dependencies beyond Python's standard library**.
 
 ```
@@ -75,10 +75,25 @@ Run a program, start the interactive shell, or ask for help:
 ```text
 forge run examples/force.forge
 forge shell
+forge ide
+forge browser
 forge --help
 ```
 
-On Windows, backslashes in file paths work too (for example `forge run examples\force.forge`).
+`forge ide` opens the native offline editor with a MATLAB-style workspace, script editor, command
+window, vector plotting, and a Blueprint canvas. The Blueprint tab uses a graph-paper grid: add
+Input, Constant, Function, arithmetic, Output, and Script nodes. Drag node headers to reposition;
+drag a node’s lower-right corner to resize it. Select a node and choose **Delete Node** (or press
+Delete) to remove it. Connect output pins to input pins. A Script node accepts arbitrary F²ORGE
+statements, so equations, imports, solves, conversions, loops, prints, assignments, and expressions
+can all be authored in the Blueprint canvas. Script nodes run before generated Output nodes.
+Input nodes reference workspace variables; an Input and Output sharing a name prompts for
+confirmation and orders dependent outputs automatically. Save and reopen `.fgraph` files.
+**Dark: On/Off** switches between light and a softer, lower-contrast dark palette. Pan the graph
+with the middle mouse button and scroll with the wheel. In the command window, use `plot(y)` or
+`plot(x, y)` for vectors. The desktop window requires Tkinter in your Python installation. On
+Windows, backslashes in file paths work too (for example
+`forge run examples\force.forge`).
 If your system already uses the `forge` command (for example, Foundry), use `f2forge` in its place
 or launch F²ORGE as a Python module:
 
@@ -86,6 +101,17 @@ or launch F²ORGE as a Python module:
 f2forge run examples/force.forge
 python -m f2orge run examples/force.forge
 ```
+
+`forge browser` starts a browser-based engineering workspace at `http://127.0.0.1:8765` and opens
+it automatically. It is served only from your own computer; no cloud service or external assets are
+used. The browser workspace includes a script editor, persistent command window, variable/equation
+list, Blueprint canvas, and a softer dark theme. Blueprint nodes can be repositioned, resized, and
+deleted; Script nodes support any F²ORGE statement, while name-shared Input/Output nodes prompt for
+confirmation. Use **Open** and **Save file** to load and download
+`.forge`/`.eq` programs, or **Open graph** and **Save graph** for `.fgraph` diagrams. Use
+`forge browser --port 0` to choose an available local port automatically, or `--no-open` to start
+the server without opening a browser. Both IDEs use warm off-white surfaces, restrained orange
+highlights, and a deep charcoal dark mode. Stop it with Ctrl+C in the terminal.
 
 ### 3. Use the interactive shell
 
@@ -176,9 +202,29 @@ forge graph Force --vary a --from 0 --to 20 --curve "m=50 kg" --curve "m=100 kg"
 
 The swept input needs a unit declaration in its equation. Multiple curves must vary the same
 additional input; up to 20 curves are supported. Axis labels use equation documentation when present.
-The SVG is self-contained and does not require a plotting package or desktop GUI.
+The SVG is self-contained and does not require a plotting package or desktop GUI. Add `--interactive`
+to export an offline HTML graph with zoom, pan, reset, and per-curve toggles:
 
-### 7. VS Code and tests
+```text
+forge graph Force --vary a --from 0 --to 20 --curve "m=50 kg" --curve "m=100 kg" --interactive
+```
+
+### 7. Generate an offline calculator
+
+Turn a callable equation into a self-contained HTML app:
+
+```text
+forge calc Force -o force-calculator.html
+```
+
+Open the file in a browser. Enter each value in its declared unit, or include a compatible unit
+(`0.15 t` is accepted for a mass input declared in kg); the output updates as you type. Incompatible
+units are reported next to the fields. All calculations run locally in the page.
+
+For an interactive terminal version, run `forge calc Force --terminal` and enter assignments such
+as `m = 150 kg`. Outputs recalculate whenever you change an input; use `:help`, `:values`, or `:quit`.
+
+### 8. VS Code and tests
 
 For syntax highlighting, follow [the VS Code extension instructions](vscode-forge/README.md). To run
 the test suite after installing the development extra:
@@ -194,34 +240,50 @@ The same F²ORGE commands are available in the VS Code terminal on Windows, macO
 ```text
 forge run FILE.forge [--explain]     Run a program
 forge shell                          Start the interactive shell
+forge ide                            Launch the offline desktop editor
 forge check FILE...                  Parse and unit-check equation files
 forge doc EQUATION [-o FILE.md]      Generate equation documentation
+forge calc EQUATION [-o FILE.html]   Export an offline calculator; --terminal runs interactively
 forge graph EQUATION ...             Export an equation graph as SVG
 forge units [FILTER]                 List built-in units
 forge --version                      Print the installed version
 ```
 
-## What is implemented (v1 core)
+## Feature scope
 
-| # | Feature | Status |
-|---|---|---|
-| 1, 2 | Variables, built-in units (length, mass, time, force, energy, power, pressure, temperature, electrical, ...) | done |
-| 3 | `convert 10 ft -> m` | done |
-| 4 | Dimensional analysis: `kg*m/s²` is shown as `N` | done |
-| 5 | Unit safety checking, with expected / found in the message | done |
-| 6, 7 | `+ - * / ^`, `sin cos tan ln log sqrt` (plus a few more) | done |
-| 8, 11, 12, 13 | `eq` blocks, auto-detected inputs and outputs, calls, metadata | done |
-| 9, 10, 39, 40 | `import`, `export`, `.eq` files, project imports | done |
-| 14 | Documentation generation (`forge doc`) | done |
-| 15 | Equation packages: a small standard library (`Force`, `Bernoulli`, `DeltaV`, ...) | started |
-| 16, 17, 18 | `solve ... for`, automatic rearrangement, missing-information errors | done |
-| 32, 33 | Constants library and engineering packs (`pi e g G R muEarth speedOfLight ...`) | done |
-| 34, 35 | `forge run`, `forge shell` | done |
-| 36 | VS Code syntax highlighting | done |
-| 37 | Located, explanatory errors | done |
-| 38 | Local-first | done |
-| 19-31 | SVG equation graphs, variable sweeps and multiple curves (initial implementation); auto-generated calculators, live updates, matrices and vectors | in progress |
-| 41-45 | Domain objects, worksheets, marketplace, browser IDE, plot windows | later |
+The v1 goal is a useful, unit-safe language for writing, reusing, and solving engineering equations.
+Graphing, interactive apps, and broader engineering data types are follow-on features; they should
+not block a dependable language and solver.
+
+### Core language (v1)
+
+| Capability | Status |
+|---|---|
+| Variables, arithmetic (`+ - * / ^`), scientific functions, and built-in constants | Implemented |
+| Built-in units, conversions, dimensional analysis, and unit-safety errors | Implemented |
+| First-class equations with inferred inputs/outputs, named calls, metadata, imports, and exports | Implemented |
+| Equation documentation and reusable standard-library formulas | Documentation implemented; formula library growing |
+| Solve for a variable, rearrange equations, and report missing information | Implemented |
+| CLI execution, interactive shell, local files, and explanatory source locations | Implemented |
+| VS Code syntax highlighting | Available |
+
+### Companion tools (useful, but not required for the language core)
+
+| Capability | Status |
+|---|---|
+| Static SVG and interactive HTML graphing, sweeps, multiple curves | Initial implementation |
+| Offline HTML and terminal calculators, live recalculation, and unit validation | Initial implementation |
+| PNG/PDF graph export and MATLAB-style interactive plot windows | Planned |
+| Generated native calculator forms and standalone desktop calculator apps | Planned |
+
+### Advanced and long-term features
+
+| Capability | Status |
+|---|---|
+| Vectors and matrices: arithmetic, products, transpose, inverse | Initial implementation; inverse is dimensionless-only |
+| Interactive engineering worksheets and domain objects (`rocket`, `motor`, `battery`) | Later |
+| Native offline desktop IDE and local browser IDE | Initial implementation |
+| Equation marketplace | Later; not recommended for v1 |
 
 The full language is described in [docs/language.md](docs/language.md).
 
@@ -252,6 +314,6 @@ Source layout: `src/f2orge/` (`units.py` registry, `dimensions.py`, `quantity.py
 * Numeric solving needs the unknown's unit to be declared.
 * `rad` and `deg` are dimensionless, so angular velocity in rad/s is the same dimension as 1/s.
 * Currencies, logarithmic units (dB) and `rpm` are not defined.
-* Graph export currently plots one callable equation output against one declared input and writes
-  SVG. Multiple curves vary a single additional input (up to 20 curves); interactive plots,
-  calculators, matrices and vectors are not implemented yet.
+* Graph export is an optional companion tool: it plots one callable equation output against one
+  declared input and writes SVG. Multiple curves vary a single additional input (up to 20 curves).
+  Native interactive plots, desktop calculators, matrices, and vectors are not implemented yet.

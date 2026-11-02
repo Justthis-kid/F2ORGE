@@ -1,0 +1,127 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="theme-color" content="#17191c">
+  <title>F²ORGE — Engineering IDE</title>
+  <link rel="stylesheet" href="/app.css">
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <a class="brand" href="#" aria-label="F²ORGE home">
+        <span class="brand-mark">F²</span>
+        <span><strong>FORGE</strong><small>ENGINEERING WORKSPACE</small></span>
+      </a>
+      <div class="project-title"><span class="live-dot"></span><span id="project-name">Untitled.forge</span><span id="dirty-mark"></span></div>
+      <div class="top-actions">
+        <span class="local-badge"><span></span> LOCAL SESSION</span>
+        <button id="theme-toggle" class="icon-button" title="Toggle color theme" aria-label="Toggle color theme">◐</button>
+        <button id="save-file" class="button subtle">Save file</button>
+        <button id="run-script" class="button primary"><span class="play-icon">▶</span> Run <kbd>Ctrl ↵</kbd></button>
+      </div>
+    </header>
+
+    <div class="workspace-layout">
+      <aside class="sidebar">
+        <div class="side-heading"><span>WORKSPACE</span><button id="refresh-workspace" class="text-button">↻</button></div>
+        <div id="workspace-list" class="workspace-list">
+          <div class="empty-state">Run a program to see its variables here.</div>
+        </div>
+        <div class="sidebar-footer">
+          <span class="status-led"></span><span id="server-status">Connected to local kernel</span>
+        </div>
+      </aside>
+
+      <main class="main-content">
+        <nav class="tabs">
+          <button class="tab active" data-panel="script-panel"><span class="tab-icon">▤</span> Script</button>
+          <button class="tab" data-panel="blueprint-panel"><span class="tab-icon">◇</span> Blueprint <span class="new-badge">VISUAL</span></button>
+          <div class="tab-spacer"></div>
+          <button class="button subtle compact" id="open-file">Open</button>
+          <input type="file" id="file-picker" accept=".forge,.eq" hidden>
+          <input type="file" id="graph-picker" accept=".fgraph,application/json" hidden>
+        </nav>
+
+        <section id="script-panel" class="panel active">
+          <div class="editor-heading">
+            <div><span class="eyebrow">PROGRAM</span><h1>Script editor</h1></div>
+            <div class="editor-tools"><span class="language-chip">F²ORGE</span><span id="line-count">1 line</span></div>
+          </div>
+          <textarea id="editor" spellcheck="false" aria-label="F²ORGE program editor" autocomplete="off" autocapitalize="off">import Force
+
+mass = 150 kg
+acceleration = 9.81 m/s^2
+
+force = Force(m = mass, a = acceleration)
+force</textarea>
+          <div class="output-area">
+            <div class="section-bar"><span class="section-title"><i></i> OUTPUT</span><button class="text-button" id="clear-output">Clear</button></div>
+            <pre id="output" class="output-content">Ready. Run your program to see results here.</pre>
+          </div>
+        </section>
+
+        <section id="blueprint-panel" class="panel blueprint-panel">
+          <div class="blueprint-toolbar">
+            <div class="blueprint-title"><span class="eyebrow">VISUAL BUILDER</span><h1>Blueprint</h1></div>
+            <div class="node-tools">
+              <button class="button node-add" data-node="Input">＋ Input</button>
+              <button class="button node-add" data-node="Constant">＋ Constant</button>
+              <button class="button node-add" data-node="Function">＋ Function</button>
+              <button class="button node-add" data-node="Script">＋ Script</button>
+              <div class="tool-divider"></div>
+              <button class="button node-add operation" data-node="Add">+</button>
+              <button class="button node-add operation" data-node="Subtract">−</button>
+              <button class="button node-add operation" data-node="Multiply">×</button>
+              <button class="button node-add operation" data-node="Divide">÷</button>
+              <button class="button node-add operation" data-node="Power">xʸ</button>
+              <button class="button node-add" data-node="Output">＋ Output</button>
+            </div>
+            <div class="blueprint-actions">
+              <button class="button subtle compact" id="open-graph">Open graph</button>
+              <button class="button subtle compact" id="save-graph">Save graph</button>
+              <button class="button primary compact" id="run-graph">▶ Run graph</button>
+              <button class="button icon-button compact" id="delete-node" title="Delete selected node">⌫</button>
+            </div>
+          </div>
+          <div class="canvas-wrap">
+            <div id="graph-canvas" class="graph-canvas" tabindex="0" aria-label="Blueprint node canvas">
+              <svg id="wires" class="wires"></svg>
+              <div id="nodes" class="nodes"></div>
+              <div id="canvas-hint" class="canvas-hint">Add a node to start building · drag nodes to arrange · connect output pins to inputs</div>
+            </div>
+          </div>
+          <div class="canvas-status"><span id="graph-message">Ready</span><span>SCROLL TO PAN · DRAG NODE HEADERS · RESIZE FROM THE CORNER · CONNECT OUTPUTS TO INPUTS</span></div>
+        </section>
+
+        <section class="console-dock">
+          <div class="console-head">
+            <div class="console-tabs"><button class="console-tab active">Command window</button></div>
+            <button id="clear-workspace" class="text-button">Clear workspace</button>
+          </div>
+          <div id="console-log" class="console-log"><div class="console-welcome">F²ORGE local kernel · enter an expression or assignment</div></div>
+          <form id="command-form" class="command-form">
+            <span class="prompt">›</span><input id="command-input" type="text" placeholder="Try: 150 kg * 9.81 m/s^2" autocomplete="off">
+            <button class="icon-button command-submit" aria-label="Run command">↵</button>
+          </form>
+        </section>
+      </main>
+    </div>
+  </div>
+  <dialog id="graph-dialog" class="graph-dialog">
+    <form method="dialog" id="graph-dialog-form">
+      <div class="dialog-mark">F²</div>
+      <p class="eyebrow" id="graph-dialog-kicker">BLUEPRINT</p>
+      <h2 id="graph-dialog-title">Confirm shared variable</h2>
+      <p id="graph-dialog-copy"></p>
+      <textarea id="graph-dialog-value" hidden spellcheck="false"></textarea>
+      <div class="dialog-actions">
+        <button class="button subtle" value="cancel" id="graph-dialog-cancel">Cancel</button>
+        <button class="button primary" value="confirm" id="graph-dialog-confirm">Continue</button>
+      </div>
+    </form>
+  </dialog>
+  <script src="/app.js" defer></script>
+</body>
+</html>

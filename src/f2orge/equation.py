@@ -157,6 +157,12 @@ class Equation:
                 continue  # needs an input with no declared unit
             except ForgeEvalError:
                 raise _Skip()
+            if not isinstance(q, Quantity):
+                raise ForgeSyntaxError(
+                    "equation outputs must be scalar quantities; matrices and vectors are program values",
+                    rel.rhs.span,
+                    hint="Use matrix and vector operations in a program assignment instead.",
+                )
             decl = self.decls.get(name)
             if decl is not None and decl.unit.dim != q.dim:
                 raise UnitError(
@@ -173,6 +179,12 @@ class Equation:
                 continue
             except ForgeEvalError:
                 raise _Skip()
+            if not isinstance(left, Quantity) or not isinstance(right, Quantity):
+                raise ForgeSyntaxError(
+                    "implicit equation relations must compare scalar quantities",
+                    rel.span,
+                    hint="Matrices and vectors are currently program values, not solver relations.",
+                )
             if left.dim != right.dim:
                 raise UnitError(
                     f"the two sides of this equation measure different things: "
@@ -217,6 +229,12 @@ class Equation:
                      f"solve {self.name} for {first} {{ ... }}")
         values: Dict[str, Quantity] = {}
         for name, (q, span) in args.items():
+            if not isinstance(q, Quantity):
+                raise ForgeSyntaxError(
+                    f"{name} of {self.name} must be a scalar quantity",
+                    span or call_span,
+                    hint="Matrices and vectors are currently supported as program values, not equation inputs.",
+                )
             decl = self.decls.get(name)
             if decl is not None and decl.unit.dim != q.dim:
                 raise UnitError(
@@ -228,6 +246,12 @@ class Equation:
         for rel in self.order:
             name = rel.lhs.name
             value = evaluator.eval(rel.rhs, scope)
+            if not isinstance(value, Quantity):
+                raise ForgeSyntaxError(
+                    "equation outputs must be scalar quantities",
+                    rel.rhs.span,
+                    hint="Matrices and vectors are currently supported as program values, not equation outputs.",
+                )
             decl = self.decls.get(name)
             if decl is not None:
                 if decl.unit.dim != value.dim:

@@ -443,9 +443,57 @@ class Parser:
             self.depth -= 1
             # keep the inner node but widen nothing: errors point at the inner expression
             return inner
+        if t.kind == "op" and t.text == "<":
+            return self.vector_literal("<", ">")
+        if t.kind == "op" and t.text == "[":
+            return self.matrix_literal()
         if t.kind == "str":
             self.fail("Text can only be used with print and in equation metadata", t)
         self.fail(f"Expected a value but found {self.describe(t)}", t)
+
+    def vector_literal(self, opening: str, closing: str):
+        start = self.expect_op(opening).start
+        self.depth += 1
+        items = []
+        if self.is_op(closing):
+            self.fail("A vector must contain at least one value", self.peek())
+        while True:
+            items.append(self.expression())
+            if self.is_op(","):
+                self.next()
+                if self.is_op(closing):
+                    break
+                continue
+            break
+        self.expect_op(closing, f"Expected ',' or '{closing}' in this vector")
+        self.depth -= 1
+        return S.VectorLiteral(tuple(items), Span(self.source, start, self.last_end))
+
+    def matrix_literal(self):
+        start = self.expect_op("[").start
+        self.depth += 1
+        rows = []
+        if self.is_op("]"):
+            self.fail("A matrix must contain at least one row", self.peek())
+        while True:
+            if not self.is_op("["):
+                self.fail("Expected a row such as '[1, 2]' in this matrix", self.peek())
+            row = self.vector_literal("[", "]")
+            rows.append(row.items)
+            if self.is_op(","):
+                self.next()
+                continue
+            if self.is_op("]"):
+                break
+            if not self.is_op("["):
+                self.fail("Expected another matrix row or ']' to close the matrix", self.peek())
+        self.expect_op("]")
+        self.depth -= 1
+        widths = {len(row) for row in rows}
+        if len(widths) != 1:
+            self.fail("All matrix rows must have the same number of values",
+                      Span(self.source, start, self.last_end))
+        return S.MatrixLiteral(tuple(rows), Span(self.source, start, self.last_end))
 
     def number_or_quantity(self):
         tok = self.next()

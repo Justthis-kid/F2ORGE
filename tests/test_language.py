@@ -34,6 +34,220 @@ def test_variables_and_ans():
     assert run("x = 1; y = 2; x + y") == ["3"]
 
 
+def test_vectors_support_addition_scaling_and_dot_products():
+    assert run("v = <1, 2, 3>\nv + <3, 2, 1>\n2 * v\nv * v") == [
+        "<4, 4, 4>", "<2, 4, 6>", "14",
+    ]
+
+
+def test_matrices_support_matrix_vector_and_matrix_matrix_products():
+    assert run("""A = [
+  [1, 2]
+  [3, 4]
+]
+B = [[2, 0], [1, 2]]
+A * B
+A * <1, 2>
+<1, 2> * A""") == [
+        "[[4, 4], [10, 8]]", "<5, 11>", "<7, 10>",
+    ]
+
+
+def test_matrix_inverse_and_transpose():
+    assert run("A = [[1, 2], [3, 4]]\ntranspose(A)\ninverse(A)") == [
+        "[[1, 3], [2, 4]]", "[[-2, 1], [1.5, -0.5]]",
+    ]
+
+
+def test_linear_algebra_checks_shapes_units_and_singular_inverse():
+    from f2orge.errors import ForgeEvalError
+
+    assert "same length" in error_of("<1, 2> + <3>").message
+    assert "cannot multiply" in error_of("[[1, 2]] * <1>").message
+    assert "Unit mismatch" == error_of("<1 m, 2 s> * <1, 1>").title
+    assert "singular" in error_of("inverse([[1, 2], [2, 4]])").message
+    with pytest.raises(ForgeEvalError, match="same shape"):
+        run("[[1, 2]] + [[1], [2]]")
+    assert "same number of values" in error_of("A = [[1, 2], [3]]").message
+    assert "square matrix" in error_of("inverse([[1, 2, 3], [4, 5, 6]])").message
+    assert "scalar quantity" in error_of("convert <1, 2> -> m").message
+
+
+def test_equations_reject_matrix_and_vector_values_with_clear_errors():
+    assert "matrices and vectors are program values" in error_of("eq A { result = [[1, 2]] }").message
+
+
+def test_desktop_ide_runs_programs_and_returns_compiler_errors():
+    from f2orge.desktop import run_source
+
+    output, success = run_source("x = 150 kg\nprint x * 9.81 m/s^2")
+    assert success and output == "1471.5 N"
+    output, success = run_source("10 kg + 5 m")
+    assert not success and "Unit mismatch" in output and "<editor>:1:1" in output
+
+
+def test_desktop_session_shares_script_and_command_window_workspace():
+    from f2orge.desktop import DesktopSession
+
+    session = DesktopSession()
+    output, success = session.execute("mass = 2 kg\nspeed = 3 m/s")
+    assert success and output == ""
+    output, success = session.execute("mass * speed")
+    assert success and output == "6 kg*m/s"
+    output, success = session.execute("speed = 4 m/s")
+    assert success and output == ""
+    output, success = session.execute("mass * speed")
+    assert success and output == "8 kg*m/s"
+
+
+def test_desktop_session_plots_workspace_vectors():
+    from f2orge.desktop import DesktopSession
+
+    session = DesktopSession()
+    output, success = session.execute("time = <0 s, 1 s, 2 s>\nposition = <0 m, 3 m, 8 m>")
+    assert success and not output
+    assert session.plot_data("plot(time, position)") == (
+        "time (s)", "position (m)", [(0.0, 0.0), (1.0, 3.0), (2.0, 8.0)],
+    )
+    assert session.plot_data("plot position") == (
+        "Index", "position (m)", [(1, 0.0), (2, 3.0), (3, 8.0)],
+    )
+
+
+def test_visual_graph_compiles_connected_nodes_to_forge_and_runs():
+    from f2orge.desktop import DesktopSession
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    mass = graph.add_node("Input", "mass", 10, 10)
+    acceleration = graph.add_node("Constant", "9.81 m/s^2", 10, 140)
+    multiply = graph.add_node("Multiply", x=250, y=50)
+    output = graph.add_node("Output", "force", 500, 50)
+    graph.connect(mass.id, multiply.id, 0)
+    graph.connect(acceleration.id, multiply.id, 1)
+    graph.connect(multiply.id, output.id, 0)
+
+    source = graph.compile()
+    assert source == "force = (mass * 9.81 m/s^2)\nforce"
+    session = DesktopSession()
+    session.execute("mass = 150 kg")
+    result, success = session.execute(source)
+    assert success and result == "1471.5 N"
+
+
+def test_visual_graph_functions_persistence_and_validation():
+    from f2orge.errors import ForgeError
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    source = graph.add_node("Constant", "16")
+    root = graph.add_node("Function", "sqrt")
+    output = graph.add_node("Output", "length")
+    graph.connect(source.id, root.id, 0)
+    graph.connect(root.id, output.id, 0)
+    saved = graph.to_data()
+    restored = VisualGraph.from_data(saved)
+    assert restored.compile() == "length = sqrt(16)\nlength"
+    cyclic = VisualGraph()
+    add_a = cyclic.add_node("Add")
+    add_b = cyclic.add_node("Add")
+    cyclic.connect(add_a.id, add_b.id, 0)
+    with pytest.raises(ForgeError, match="cycle"):
+        cyclic.connect(add_b.id, add_a.id, 0)
+    with pytest.raises(ForgeError, match="valid output"):
+        graph.add_node("Output", "not a name")
+    with pytest.raises(ForgeError, match="one F²ORGE expression"):
+        graph.add_node("Constant", "1\nx = 2")
+    with pytest.raises(ForgeError, match="Output"):
+        VisualGraph().compile()
+
+
+def test_visual_graph_removing_node_clears_its_connections():
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    value = graph.add_node("Constant", "16")
+    root = graph.add_node("Function", "sqrt")
+    output = graph.add_node("Output", "length")
+    graph.connect(value.id, root.id, 0)
+    graph.connect(root.id, output.id, 0)
+
+    graph.remove_node(root.id)
+
+    assert (root.id, 0) not in graph.connections
+    assert (output.id, 0) not in graph.connections
+
+
+def test_visual_graph_shared_output_input_orders_assignments_and_runs_scripts():
+    from f2orge.desktop import DesktopSession
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    graph.add_node("Script", "eq Force { F = m * a }\nm = 2 kg\na = 3 m/s^2")
+    two = graph.add_node("Constant", "2")
+    three = graph.add_node("Constant", "3")
+    five = graph.add_node("Add")
+    graph.connect(two.id, five.id, 0)
+    graph.connect(three.id, five.id, 1)
+    downstream_input = graph.add_node("Input", "force")
+    four = graph.add_node("Constant", "4")
+    multiply = graph.add_node("Multiply")
+    graph.connect(downstream_input.id, multiply.id, 0)
+    graph.connect(four.id, multiply.id, 1)
+    downstream_output = graph.add_node("Output", "result")
+    graph.connect(multiply.id, downstream_output.id, 0)
+    produced_output = graph.add_node("Output", "force")
+    graph.connect(five.id, produced_output.id, 0)
+
+    source = graph.compile()
+    assert source.index("force =") < source.index("result =")
+    session = DesktopSession()
+    result, success = session.execute(source)
+    assert success and result == "5\n20"
+    assert session.interpreter.variables["force"].value == 5
+
+
+def test_visual_graph_version_two_preserves_node_sizes_and_reads_legacy_files():
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    script = graph.add_node("Script", "x = 2")
+    script.width = 360
+    script.height = 240
+    restored = VisualGraph.from_data(graph.to_data())
+    assert restored.nodes[script.id].width == 360
+    assert restored.nodes[script.id].height == 240
+    legacy = VisualGraph.from_data({
+        "version": 1,
+        "nodes": [{"id": 1, "kind": "Output", "value": "result", "x": 10, "y": 20}],
+        "connections": [],
+    })
+    assert legacy.nodes[1].width == 190
+
+
+def test_visual_graph_script_only_executes_full_forge_statements():
+    from f2orge.desktop import DesktopSession
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    graph.add_node("Script", "eq Area { A = w * h }\nprint \"ready\"\nsolve Area for A { w = 3 m\n h = 2 m }")
+    compiled = graph.compile()
+    session = DesktopSession()
+    result, success = session.execute(compiled)
+    assert success and result == "ready\nA = 6 m²"
+
+
+def test_visual_graph_script_nodes_cannot_be_connected_as_expressions():
+    from f2orge.errors import ForgeError
+    from f2orge.visual_graph import VisualGraph
+
+    graph = VisualGraph()
+    script = graph.add_node("Script", "x = 1")
+    output = graph.add_node("Output", "result")
+    with pytest.raises(ForgeError, match="Script node has no output pin"):
+        graph.connect(script.id, output.id, 0)
+
+
 def test_variables_can_shadow_constants_and_units():
     assert run("g = 5 m/s^2\ng") == ["5 m/s²"]
     assert run("m = 150 kg\nm * 2 m") == ["300 kg*m"] or run("m = 150 kg\nm * 2 m")[0].startswith("300")

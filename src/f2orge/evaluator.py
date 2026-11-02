@@ -15,6 +15,11 @@ from . import syntax as S
 from .constants import CONSTANTS
 from .dimensions import describe_full
 from .errors import ForgeError, ForgeEvalError, ForgeNameError, ForgeSyntaxError, Span, UnitError
+from .linear_algebra import (
+    Matrix, Value, add as add_linear, divide as divide_linear,
+    inverse, make_matrix, make_vector, multiply as multiply_linear, negate, subtract as subtract_linear,
+    transpose,
+)
 from .quantity import Quantity
 from .units import lookup_unit
 
@@ -30,20 +35,20 @@ class Scope:
     gets its own R rather than the molar gas constant.
     """
 
-    def __init__(self, values: Optional[Dict[str, Quantity]] = None, excluded: Iterable[str] = (),
+    def __init__(self, values: Optional[Dict[str, Value]] = None, excluded: Iterable[str] = (),
                  constants: bool = True):
-        self.values: Dict[str, Quantity] = values if values is not None else {}
+        self.values: Dict[str, Value] = values if values is not None else {}
         self.excluded = frozenset(excluded)
         self.constants = constants
 
-    def get(self, name: str) -> Optional[Quantity]:
+    def get(self, name: str) -> Optional[Value]:
         if name in self.values:
             return self.values[name]
         if self.constants and name not in self.excluded:
             return CONSTANTS.get(name)
         return None
 
-    def set(self, name: str, value: Quantity) -> None:
+    def set(self, name: str, value: Value) -> None:
         self.values[name] = value
 
     def names(self) -> List[str]:
@@ -57,7 +62,7 @@ class Scope:
 ARITY = {
     "sin": (1, 1), "cos": (1, 1), "tan": (1, 1), "asin": (1, 1), "acos": (1, 1), "atan": (1, 1),
     "atan2": (2, 2), "exp": (1, 1), "ln": (1, 1), "log": (1, 1), "sqrt": (1, 1), "abs": (1, 1),
-    "min": (2, 99), "max": (2, 99),
+    "min": (2, 99), "max": (2, 99), "inverse": (1, 1), "transpose": (1, 1),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -77,7 +82,7 @@ class Evaluator:
         self.import_hint: Callable[[str], Optional[str]] = lambda name: None  # set by the Interpreter
 
     # ---- entry point -----------------------------------------------------------------------
-    def eval(self, node, scope: Scope) -> Quantity:
+    def eval(self, node, scope: Scope):
         try:
             return self._eval(node, scope)
         except ForgeError as err:
@@ -85,7 +90,7 @@ class Evaluator:
                 err.span = node.span
             raise
 
-    def _eval(self, node, scope: Scope) -> Quantity:
+    def _eval(self, node, scope: Scope):
         if isinstance(node, S.Number):
             return Quantity(node.value)
         if isinstance(node, S.QuantityLit):
@@ -96,19 +101,25 @@ class Evaluator:
                 raise self._undefined(node.name, node.span, scope)
             return value
         if isinstance(node, S.Unary):
-            return -self.eval(node.operand, scope)
+            return negate(self.eval(node.operand, scope))
         if isinstance(node, S.Binary):
             left = self.eval(node.left, scope)
             right = self.eval(node.right, scope)
             if node.op == "+":
-                return left + right
+                return add_linear(left, right)
             if node.op == "-":
-                return left - right
+                return subtract_linear(left, right)
             if node.op == "*":
-                return left * right
+                return multiply_linear(left, right)
             if node.op == "/":
-                return left / right
+                return divide_linear(left, right)
+            if not isinstance(left, Quantity) or not isinstance(right, Quantity):
+                raise ForgeEvalError("vectors and matrices cannot be raised to a power", node.span)
             return left ** right
+        if isinstance(node, S.VectorLiteral):
+            return make_vector([self.eval(item, scope) for item in node.items])
+        if isinstance(node, S.MatrixLiteral):
+            return make_matrix([[self.eval(item, scope) for item in row] for row in node.rows])
         if isinstance(node, S.Call):
             if node.func in ARITY:
                 return self._call_function(node, scope)
@@ -187,7 +198,17 @@ def _dimless(q: Quantity, fname: str, what: str = "a plain number") -> float:
     return q.value
 
 
-def _apply(name: str, args: List[Quantity]) -> Quantity:
+def _apply(name: str, args: List[object]):
+    if name == "transpose":
+        if not isinstance(args[0], Matrix):
+            raise ForgeEvalError("transpose() requires a matrix")
+        return transpose(args[0])
+    if name == "inverse":
+        if not isinstance(args[0], Matrix):
+            raise ForgeEvalError("inverse() requires a matrix")
+        return inverse(args[0])
+    if any(not isinstance(arg, Quantity) for arg in args):
+        raise ForgeEvalError(f"{name}() requires scalar quantities")
     try:
         if name in ("sin", "cos", "tan"):
             x = _dimless(args[0], name, "an angle (rad or deg) or a plain number")

@@ -15,7 +15,7 @@ from .errors import ForgeSyntaxError, Source, Span
 SUPER_CHARS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁻"
 _SUPER_TO_ASCII = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻", "0123456789-")
 _UNICODE_OPS = {"×": "*", "·": "*", "÷": "/", "−": "-", "→": "->"}
-_OPS = set("+-*/^=(),.:;{}")
+_OPS = set("+-*/^=(),.:;{}[]<>")
 _NUMBER = re.compile(r"(?:[0-9][0-9_]*(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _WORD_EXTRA = "_µΩ°"
 

@@ -2,8 +2,9 @@ import json
 import xml.etree.ElementTree as ET
 
 from f2orge import Interpreter
+from f2orge.calculator import run_terminal_calculator
 from f2orge.repl import is_complete, run_shell
-from helpers import ROOT, TempDir, forge
+from helpers import ROOT, TempDir, forge, run_it
 
 
 def test_run_examples_exit_cleanly():
@@ -45,6 +46,18 @@ def test_units_and_version_commands():
     assert forge().returncode == 0
 
 
+def test_desktop_ide_command_is_available():
+    result = forge("ide", "--help")
+    assert result.returncode == 0 and "native offline editor" in result.stdout
+
+
+def test_browser_ide_commands_are_available():
+    browser = forge("browser", "--help")
+    web = forge("web", "--help")
+    assert browser.returncode == 0 and "browser IDE on loopback" in browser.stdout
+    assert web.returncode == 0 and "--no-open" in web.stdout
+
+
 def test_graph_command_exports_browser_compatible_svg():
     with TempDir() as d:
         output = d / "force.svg"
@@ -78,6 +91,20 @@ def test_graph_command_exports_multiple_curves_with_legend():
     assert "m = 50 kg" in texts and "m = 100 kg" in texts
 
 
+def test_graph_command_exports_offline_interactive_html():
+    with TempDir() as d:
+        output = d / "interactive.html"
+        result = forge("graph", "Force", "--vary", "a", "--from", "0", "--to", "20",
+                       "--curve", "m=50 kg", "--curve", "m=100 kg", "--samples", "3",
+                       "--interactive", "-o", str(output), cwd=d)
+        assert result.returncode == 0, result.stderr
+        page = output.read_text(encoding="utf-8")
+    assert "<!doctype html>" in page and "<svg " in page
+    assert "Reset view" in page and 'data-series="0"' in page and 'data-series="1"' in page
+    assert 'addEventListener("wheel",zoom' in page
+    assert "pointerdown" in page and "https://" not in page and "<script src=" not in page
+
+
 def test_graph_command_rejects_mixed_curve_variables():
     with TempDir() as d:
         equation = d / "TripleInput.eq"
@@ -88,6 +115,60 @@ def test_graph_command_rejects_mixed_curve_variables():
         result = forge("graph", str(equation), "--vary", "x", "--from", "0", "--to", "20",
                        "--curve", "y=50 kg", "--curve", "z=10 s", cwd=d)
     assert result.returncode == 1 and "same input" in result.stderr
+
+
+def test_calc_command_generates_standalone_offline_html():
+    with TempDir() as d:
+        equation = d / "Force.eq"
+        equation.write_text(
+            """eq Force {
+ description = "Newton's Second Law"
+ m : kg "mass"
+ a : m/s^2 "acceleration"
+ F : N "net force"
+ F = m * a
+}
+""",
+            encoding="utf-8",
+        )
+        output = d / "force.html"
+        result = forge("calc", str(equation), "-o", str(output), cwd=d)
+        assert result.returncode == 0, result.stderr
+        page = output.read_text(encoding="utf-8")
+    assert "<!doctype html>" in page
+    assert "Newton's Second Law" in page
+    assert 'input.id="input-"+name' in page and 'value.id="result-"+name' in page
+    assert 'addEventListener("input",recalculate)' in page
+    assert 'expects "+decl.description' in page
+    assert "https://" not in page and "<script src=" not in page
+
+
+def test_calc_command_requires_declared_input_units():
+    with TempDir() as d:
+        equation = d / "NoUnits.eq"
+        equation.write_text("eq NoUnits { y = x * 2 }\n", encoding="utf-8")
+        result = forge("calc", str(equation), "-o", str(d / "calculator.html"), cwd=d)
+        assert result.returncode == 1 and "unit declarations" in result.stderr
+        assert not (d / "calculator.html").exists()
+
+
+def test_terminal_calculator_recalculates_and_checks_units():
+    interpreter, _ = run_it(
+        'eq Force {\n m : kg\n a : m/s^2\n F : N\n F = m * a\n}\n'
+    )
+    lines = iter(["m = 50 kg", "a = 2 m/s^2", "m = 100 kg", "a = 2 m", ":quit"])
+    output = []
+    run_terminal_calculator(interpreter, "Force", input_fn=lambda prompt: next(lines), out=output.append)
+    text = "\n".join(output)
+    assert "F = 100 N" in text and "F = 200 N" in text
+    assert "a of Force expects acceleration (m/s²), but this is length (m)" in text
+
+
+def test_terminal_calculator_cli_uses_standard_equation():
+    result = forge("calc", "Force", "--terminal",
+                   stdin="m = 150 kg\na = 9.81 m/s^2\n:quit\n")
+    assert result.returncode == 0, result.stderr
+    assert "F = 1471.5 N" in result.stdout
 
 
 def test_graph_command_reports_unit_mismatches_without_writing_a_graph():

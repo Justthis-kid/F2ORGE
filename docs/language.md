@@ -35,6 +35,28 @@ Multiplying or dividing two quantities gives simplified SI, using a named unit w
 
 Functions: `sin cos tan asin acos atan atan2 exp ln log sqrt abs min max`.
 `log` is base 10. `sqrt(16 m^2)` is `4 m`. Trig and log arguments must be dimensionless.
+`inverse` and `transpose` operate on matrices.
+
+### Vectors and matrices
+
+Vectors use angle brackets; matrices are rows of bracketed values:
+
+```
+v = <1, 2, 3>
+A = [
+  [1, 2]
+  [3, 4]
+]
+transpose(A)
+inverse(A)
+A * v
+```
+
+Vectors support addition/subtraction, scalar multiplication/division, and dot products. Matrices
+support addition/subtraction, scalar multiplication/division, matrix multiplication, matrix-vector
+products, transpose, and inverse. Element operations preserve unit checking. Inverse currently
+requires a square, dimensionless matrix. Matrices and vectors are program values, not equation
+outputs or solver relations.
 
 Built-in constants: `pi e g G R` (physics), `speedOfLight kB NA sigmaSB`, and the aerospace pack
 `muEarth rEarth rhoSL pSL TSL`. Your own variables may shadow them.
@@ -108,7 +130,9 @@ import ./formulas/Force.eq      # an explicit path (relative to the importing fi
 export Force                    # writes Force.eq next to the program
 ```
 
-Standard library: `Force KineticEnergy Bernoulli DeltaV IdealGas Ohm Lift CircularOrbit`.
+Standard library:
+`Force KineticEnergy Work Power Momentum Density PressureFromForce HydrostaticPressure SpringForce
+Bernoulli DeltaV IdealGas Ohm ElectricalPower CapacitorEnergy Lift CircularOrbit`.
 An `.eq` file may contain only `eq` definitions and `import`s.
 
 ## Graph export
@@ -128,8 +152,71 @@ curves while varying one other input; every curve option must name the same inpu
 declared or inferred SI output unit, variable documentation as axis labels when available, and a
 legend for multiple curves. It can be opened in a browser on any supported platform.
 
-## Not in v0.1 (planned)
+Add `--interactive` to create a self-contained HTML graph instead. It works offline and supports
+wheel/trackpad zoom, drag-to-pan, reset, and toggling individual curves:
 
-Interactive graphs, generated calculators and live updates, matrices and vectors,
-domain objects (`rocket`, `motor`, `battery`), worksheets, a package marketplace. Simultaneous
-equation systems are not solved yet; each `solve` handles one chain of single-unknown relations.
+```powershell
+forge graph Force --vary a --from 0 --to 20 --curve "m=50 kg" --curve "m=100 kg" --interactive
+```
+
+## Calculator export
+
+Generate a standalone HTML calculator from a callable equation:
+
+```powershell
+forge calc Force -o force-calculator.html
+```
+
+Open the generated file in a browser; it runs locally without a server or internet connection.
+Changing an input recalculates the outputs immediately. Enter a number in the declared input unit,
+or append a compatible unit such as `0.15 t`; incompatible units and invalid values are reported
+in the page. Every input needs a unit declaration so the calculator can validate values. Outputs
+use their declared unit or the inferred SI unit.
+
+For an interactive terminal calculator using the same evaluator, run
+`forge calc Force --terminal`. Enter assignments such as `m = 150 kg`; outputs recalculate when
+inputs change. Use `:help` for a reminder, `:values` to inspect current values, or `:quit` to exit.
+
+## Offline desktop IDE
+
+Run `forge ide` to open the native Tkinter editor. Open or save `.forge` and `.eq` files, then
+press **Run** or **F5** to execute it. The workspace shows variables and equations; the command
+window runs expressions and assignments in the same session, with Up/Down command history. Use
+`plot(y)` or `plot(x, y)` on vector variables to open a native plot window. `:clear` resets the
+workspace. The IDE runs locally without an internet connection; the selected Python installation
+must include Tkinter. The **Blueprint** tab provides a graph-paper canvas with Input, Constant,
+Function, arithmetic, and Output nodes. Connect output pins to input pins, then select **Run Graph**
+to compile the visual flow into F²ORGE statements and execute it in the shared workspace. Input
+nodes refer to variables already present in the workspace; Constant nodes accept F²ORGE
+expressions. Drag node bodies to reposition; select a node and use **Delete Node** or press Delete.
+Save graphs in `.fgraph` files. **Dark: On/Off** switches between light and a softer,
+lower-contrast dark palette. Middle-drag to pan the graph canvas; use the mouse wheel to scroll.
+Syntax highlighting and code completion are not included yet.
+
+## Browser IDE
+
+Run `forge browser` to open the local browser-based IDE at `http://127.0.0.1:8765`; `forge web`
+is an alias. The application is served on loopback by the local F²ORGE process and does not use a
+cloud service or remote assets. It includes a script editor, command window, workspace list, and a
+Blueprint canvas with draggable, connectable, deletable, resizable nodes. A **Script** node accepts
+arbitrary F²ORGE statements, including equation definitions, imports, solves, conversions, loops,
+prints, assignments, and expressions. Script nodes run before Output nodes, so graph Inputs can
+consume variables created by script blocks. Connect typed nodes for visual expression building.
+When an Input and Output use the same variable name, the IDE asks you to confirm sharing; the graph
+compiler orders the producing Output before Outputs that consume it. A circular shared-variable
+dependency is rejected. Graph files use version 2 to preserve node dimensions and remain compatible
+with version 1 files. Use **Open**/**Save file** for `.forge` or `.eq` programs and
+**Open graph**/**Save graph** for `.fgraph` diagrams. `--no-open`
+prevents automatic browser launch; `--port 0` requests an available local port. Stop the server
+with Ctrl+C.
+
+## Scope beyond the language core
+
+The language core does not depend on interactive graphs, generated calculators or live updates,
+domain objects (`rocket`, `motor`, `battery`), or interactive worksheets.
+Static SVG and interactive HTML graph export and standalone offline calculator export are optional
+companion tools; PNG/PDF export and MATLAB-style plot windows are future work. The native and
+loopback browser IDEs are initial implementations; an equation marketplace is not recommended for v1.
+
+Simultaneous equation systems are not solved yet; each `solve` handles one chain of single-unknown
+relations.

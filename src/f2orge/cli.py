@@ -9,10 +9,11 @@ from pathlib import Path
 from typing import List, Optional
 
 from . import __version__, units
+from .calculator import render_calculator, run_terminal_calculator
 from .docgen import document_all
 from .errors import ForgeError
 from .interpreter import Interpreter
-from .plot import render_svg
+from .plot import render_interactive_html, render_svg
 from .quantity import Quantity
 from .repl import run_shell
 from .units import Unit, units_by_kind
@@ -278,8 +279,16 @@ def cmd_graph(args) -> int:
         x_label = f"{x_name} ({x_symbol})" if x_symbol else x_name
         y_label = f"{y_name} ({y_symbol})" if y_symbol else y_name
         svg = render_svg(f"{eq.name}: {output_name} vs {args.vary}", x_label, y_label, named_series)
-        output = Path(args.output) if args.output else Path(f"{eq.name}-{args.vary}.svg")
-        output.write_text(svg, encoding="utf-8")
+        if args.interactive:
+            page = render_interactive_html(
+                svg, f"{eq.name}: {output_name} vs {args.vary}",
+                [label for label, _ in named_series],
+            )
+            output = Path(args.output) if args.output else Path(f"{eq.name}-{args.vary}.html")
+            output.write_text(page, encoding="utf-8")
+        else:
+            output = Path(args.output) if args.output else Path(f"{eq.name}-{args.vary}.svg")
+            output.write_text(svg, encoding="utf-8")
     except ForgeError as err:
         _report(err)
         return 1
@@ -287,6 +296,72 @@ def cmd_graph(args) -> int:
         print(f"error: cannot write graph: {err}", file=sys.stderr)
         return 1
     print(f"Wrote {output}")
+    return 0
+
+
+def cmd_calc(args) -> int:
+    interp = Interpreter(base_dir=Path.cwd())
+    target = args.target
+    is_path = target.endswith(".eq") or "/" in target or "\\" in target
+    try:
+        path = interp.find_eq_file(target, is_path, None)
+        names = interp.load_eq_file(path)
+        if is_path:
+            if len(names) != 1:
+                raise ForgeError(
+                    f"'{target}' defines {len(names)} equations; generate a calculator by equation name",
+                    title="Calculator unavailable",
+                )
+            eq_name = names[0]
+        else:
+            if target not in names:
+                raise ForgeError(
+                    f"'{path.name}' does not define an equation named '{target}'",
+                    title="Calculator unavailable",
+                )
+            eq_name = target
+        if args.terminal:
+            if args.output:
+                raise ForgeError("--terminal cannot be combined with --output",
+                                 title="Invalid calculator options")
+            eq = interp.equations[eq_name]
+            if not eq.callable:
+                raise ForgeError(f"{eq.name} does not define callable outputs",
+                                 title="Calculator unavailable")
+            run_terminal_calculator(interp, eq_name)
+            return 0
+        page = render_calculator(interp, eq_name)
+        output = Path(args.output) if args.output else Path(f"{eq_name}-calculator.html")
+        output.write_text(page, encoding="utf-8")
+    except ForgeError as err:
+        _report(err)
+        return 1
+    except OSError as err:
+        print(f"error: cannot write calculator: {err}", file=sys.stderr)
+        return 1
+    print(f"Wrote {output}")
+    return 0
+
+
+def cmd_ide(_args) -> int:
+    from .desktop import launch_desktop_ide
+
+    try:
+        launch_desktop_ide()
+    except ForgeError as err:
+        _report(err)
+        return 1
+    return 0
+
+
+def cmd_browser(args) -> int:
+    from .web_ide import serve_browser_ide
+
+    try:
+        serve_browser_ide(port=args.port, open_browser=not args.no_open)
+    except OSError as err:
+        print(f"error: cannot start browser IDE: {err}", file=sys.stderr)
+        return 1
     return 0
 
 
@@ -335,8 +410,28 @@ def build_parser() -> argparse.ArgumentParser:
                    help="vary another input for multiple curves, e.g. --curve 'm=50 kg' (repeat)")
     g.add_argument("--samples", type=int, default=101, help="number of samples (2-5001; default: 101)")
     g.add_argument("--output-name", help="output variable to plot (defaults to the primary output)")
-    g.add_argument("-o", "--output", help="SVG filename (defaults to Equation-variable.svg)")
+    g.add_argument("--interactive", action="store_true", help="write a standalone interactive HTML graph")
+    g.add_argument("-o", "--output", help="output filename (defaults to Equation-variable.svg or .html)")
     g.set_defaults(func=cmd_graph)
+
+    c = sub.add_parser("calc", help="generate a standalone offline HTML calculator")
+    c.add_argument("target", help="an equation name (Force), or a single-equation .eq file")
+    c.add_argument("-o", "--output", help="HTML filename (defaults to Equation-calculator.html)")
+    c.add_argument("--terminal", action="store_true",
+                   help="run an interactive terminal calculator instead of writing HTML")
+    c.set_defaults(func=cmd_calc)
+
+    ide = sub.add_parser("ide", help="launch the offline desktop editor",
+                         description="Launch the native offline editor. Tkinter is required.")
+    ide.set_defaults(func=cmd_ide)
+
+    browser = sub.add_parser(
+        "browser", aliases=["web"], help="launch the local browser IDE",
+        description="Launch the browser IDE on loopback. No cloud service or external assets are used.",
+    )
+    browser.add_argument("--port", type=int, default=8765, help="local port (default: 8765)")
+    browser.add_argument("--no-open", action="store_true", help="do not open a browser automatically")
+    browser.set_defaults(func=cmd_browser)
 
     u = sub.add_parser("units", help="list the built-in units")
     u.add_argument("filter", nargs="?")

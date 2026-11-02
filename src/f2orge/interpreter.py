@@ -10,6 +10,7 @@ from . import syntax as S
 from .equation import Equation
 from .errors import ForgeError, ForgeImportError, ForgeNameError, Source
 from .evaluator import Evaluator, Scope
+from .linear_algebra import Value
 from .parser import parse
 from .printer import format_equation
 from .quantity import Quantity
@@ -35,7 +36,7 @@ class Interpreter:
         self.out = out or print
         self.explain = explain  # show the rearranged formula for every solve
         self.echo = echo        # print assignments too (the shell does)
-        self.variables: Dict[str, Quantity] = {}
+        self.variables: Dict[str, Value] = {}
         self.equations: Dict[str, Equation] = {}
         self.evaluator = Evaluator(self.equations.get)
         self.evaluator.equation_names = lambda: list(self.equations)
@@ -77,7 +78,11 @@ class Interpreter:
                              else str(self.evaluator.eval(item, self.scope())))
             self.out(" ".join(parts))
         elif isinstance(st, S.Convert):
-            result = self.evaluator.eval(st.expr, self.scope()).to(st.unit)
+            value = self.evaluator.eval(st.expr, self.scope())
+            if not isinstance(value, Quantity):
+                raise ForgeError("convert expects a scalar quantity, not a matrix or vector",
+                                 st.span, title="Invalid conversion")
+            result = value.to(st.unit)
             self.variables["ans"] = result
             self.out(str(result))
         elif isinstance(st, S.EqDef):

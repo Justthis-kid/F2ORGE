@@ -65,8 +65,25 @@ class Member:
     span: Optional[Span] = None
 
 
+@dataclass(frozen=True)
+class VectorLiteral:
+    items: Tuple[object, ...]
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class MatrixLiteral:
+    rows: Tuple[Tuple[object, ...], ...]
+    span: Optional[Span] = None
+
+
 def children(node) -> Iterator[object]:
-    if isinstance(node, Unary):
+    if isinstance(node, VectorLiteral):
+        yield from node.items
+    elif isinstance(node, MatrixLiteral):
+        for row in node.rows:
+            yield from row
+    elif isinstance(node, Unary):
         yield node.operand
     elif isinstance(node, Binary):
         yield node.left

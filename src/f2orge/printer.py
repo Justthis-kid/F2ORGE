@@ -45,6 +45,12 @@ def format_expr(node, parent: int = 0) -> str:
         text = node.name
     elif isinstance(node, S.Member):
         text = f"{format_expr(node.obj, _ATOM)}.{node.attr}"
+    elif isinstance(node, S.VectorLiteral):
+        text = "<" + ", ".join(format_expr(item) for item in node.items) + ">"
+    elif isinstance(node, S.MatrixLiteral):
+        text = "[" + ", ".join(
+            "[" + ", ".join(format_expr(item) for item in row) + "]" for row in node.rows
+        ) + "]"
     elif isinstance(node, S.Call):
         parts: List[str] = [format_expr(a) for a in node.args]
         parts += [f"{k} = {format_expr(v)}" for k, v, _ in node.kwargs]
