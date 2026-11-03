@@ -13,6 +13,7 @@ support for unlisted or planned syntax. For examples in sequence, read the
 | **Dimension** | The physical kind of a quantity, represented by powers of SI base dimensions. |
 | **Dimensionless** | A pure number, or a ratio whose physical dimensions cancel. Angles are dimensionless here. |
 | **Equation** | A named formula group declared with `eq`; its inputs and outputs are inferred from relations. |
+| **Engineering worksheet** | A native `worksheet` block defining unit-checked inputs, calculated outputs, metadata, and optional graph sweeps for live IDE interaction. |
 | **Equation input** | A variable used by an equation but not defined by one of its relations. |
 | **Equation output** | A name defined on the left side of a simple equation relation. |
 | **Implicit relation** | A relation with a non-name left side, useful in `solve` blocks but not callable as an ordinary output formula. |
@@ -33,6 +34,11 @@ support for unlisted or planned syntax. For examples in sequence, read the
 | Word / form | Use |
 |---|---|
 | `eq` | Begin an equation definition: `eq Force { ... }`. |
+| `worksheet` | Begin an IDE-backed engineering worksheet: `worksheet Flight { ... }`. |
+| `input` | Declare a worksheet input with a unit and default, such as `input mass : kg = 150 kg`. |
+| `output` | Calculate a named worksheet result, such as `output force = mass * acceleration`. |
+| `graph` | Sweep a worksheet input and graph an output: `graph force over acceleration from 0 m/s^2 to 20 m/s^2`. |
+| `over`, `from`, `to` | Specify the input being swept and the two range endpoints of a worksheet graph. |
 | `solve` | Start a solve request: `solve Force for a { F = 100 N; m = 50 kg }`. |
 | `for` | Name the unknown in a `solve` statement. It does not introduce a loop. |
 | `import` | Load an equation by library name or `.eq` path. |

@@ -19,7 +19,10 @@ _OPS = set("+-*/^=(),.:;{}[]<>")
 _NUMBER = re.compile(r"(?:[0-9][0-9_]*(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _WORD_EXTRA = "_µΩ°"
 
-KEYWORDS = {"eq", "import", "export", "solve", "convert", "print", "for"}
+KEYWORDS = {
+    "eq", "import", "export", "solve", "convert", "print", "for",
+    "worksheet", "input", "output", "graph", "over", "from", "to",
+}
 
 
 @dataclass

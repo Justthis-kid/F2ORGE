@@ -34,7 +34,11 @@ def _workspace(session: DesktopSession) -> Dict[str, object]:
         }
         for name, equation in sorted(session.interpreter.equations.items())
     ]
-    return {"variables": variables, "equations": equations}
+    worksheets = [
+        session.interpreter.worksheet_schema(name)
+        for name in sorted(session.interpreter.worksheets)
+    ]
+    return {"variables": variables, "equations": equations, "worksheets": worksheets}
 
 
 def _handler(session: DesktopSession):
@@ -133,7 +137,9 @@ def _handler(session: DesktopSession):
                     state = _workspace(session)
                 self._json(200, {"success": True, **state})
                 return
-            if self.path not in ("/api/execute", "/api/transpile", "/api/plot", "/api/chart"):
+            if self.path not in (
+                "/api/execute", "/api/transpile", "/api/plot", "/api/chart", "/api/worksheet",
+            ):
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
                 return
             if not self.headers.get("Content-Type", "").lower().startswith("application/json"):
@@ -155,6 +161,15 @@ def _handler(session: DesktopSession):
                         return
                     y_names = data.get("y")
                     axes = data.get("axes")
+                elif self.path == "/api/worksheet":
+                    if not isinstance(data, dict):
+                        self._json(400, {"success": False, "output": "Expected a worksheet request"})
+                        return
+                    worksheet_name = data.get("name")
+                    worksheet_values = data.get("inputs", {})
+                    if not isinstance(worksheet_name, str) or not isinstance(worksheet_values, dict):
+                        self._json(400, {"success": False, "output": "Expected a worksheet name and inputs object"})
+                        return
                 else:
                     field = "command" if self.path == "/api/plot" else "source"
                     source = data.get(field) if isinstance(data, dict) else None
@@ -207,6 +222,24 @@ def _handler(session: DesktopSession):
                     })
                 except ChartError as err:
                     self._json(400, {"success": False, "output": err.format()})
+                return
+            if self.path == "/api/worksheet":
+                from .plot import render_svg
+
+                try:
+                    with session_lock:
+                        result = session.interpreter.evaluate_worksheet(worksheet_name, worksheet_values)
+                    for graph in result["graphs"]:
+                        graph["svg"] = render_svg(
+                            f"{graph['output']} vs {graph['variable']}",
+                            graph["xLabel"],
+                            graph["yLabel"],
+                            [("", graph["points"])],
+                        )
+                except ForgeError as err:
+                    self._json(400, {"success": False, "output": err.format()})
+                    return
+                self._json(200, {"success": True, **result})
                 return
             if self.path == "/api/transpile":
                 from .transpile import transpile

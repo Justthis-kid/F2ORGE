@@ -194,3 +194,36 @@ class EqDef:
     items: Tuple[object, ...]
     span: Optional[Span] = None
     name_span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class WorksheetInput:
+    name: str
+    unit: Unit
+    default: object
+    doc: Optional[str] = None
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class WorksheetOutput:
+    name: str
+    expr: object
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class WorksheetGraph:
+    output: str
+    variable: str
+    start: object
+    stop: object
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class WorksheetDef:
+    name: str
+    items: Tuple[object, ...]
+    span: Optional[Span] = None
+    name_span: Optional[Span] = None

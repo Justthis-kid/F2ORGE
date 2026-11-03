@@ -309,6 +309,7 @@
   function renderWorkspace(data) {
     const list = $("#workspace-list");
     list.replaceChildren();
+    renderWorksheets(data.worksheets || []);
     for (const [label, items, valueFor] of [
       ["VARIABLES", data.variables || [], (item) => item.value],
       ["EQUATIONS", data.equations || [], (item) => item.signature],
@@ -342,6 +343,119 @@
       empty.className = "empty-state";
       empty.textContent = "Run a program to see its variables here.";
       list.append(empty);
+    }
+  }
+
+  function renderWorksheets(worksheets) {
+    const list = $("#worksheet-list");
+    list.replaceChildren();
+    if (!worksheets.length) {
+      const empty = document.createElement("p");
+      empty.className = "worksheet-empty";
+      empty.innerHTML = 'Add a <code>worksheet</code> definition to your Forge script and press Run.';
+      list.append(empty);
+      return;
+    }
+
+    for (const worksheet of worksheets) {
+      const card = document.createElement("article");
+      card.className = "worksheet-card";
+      card.dataset.worksheet = worksheet.name;
+      const title = document.createElement("h2");
+      title.textContent = worksheet.name;
+      card.append(title);
+      if (worksheet.description) {
+        const description = document.createElement("p");
+        description.className = "worksheet-description";
+        description.textContent = worksheet.description;
+        card.append(description);
+      }
+
+      const inputs = document.createElement("div");
+      inputs.className = "worksheet-inputs";
+      for (const item of worksheet.inputs) {
+        const field = document.createElement("label");
+        field.className = "worksheet-field";
+        const caption = document.createElement("span");
+        caption.textContent = item.name;
+        const value = document.createElement("div");
+        value.className = "worksheet-value";
+        const input = document.createElement("input");
+        input.type = "number";
+        input.step = "any";
+        input.value = item.default;
+        input.dataset.input = item.name;
+        input.setAttribute("aria-label", `${item.name} (${item.unit || "dimensionless"})`);
+        const unit = document.createElement("span");
+        unit.textContent = item.unit;
+        value.append(input, unit);
+        field.append(caption, value);
+        if (item.description) {
+          const note = document.createElement("small");
+          note.textContent = item.description;
+          field.append(note);
+        }
+        inputs.append(field);
+      }
+      card.append(inputs);
+
+      const results = document.createElement("div");
+      results.className = "worksheet-results";
+      card.append(results);
+      const graphs = document.createElement("div");
+      graphs.className = "worksheet-graphs";
+      card.append(graphs);
+      const error = document.createElement("div");
+      error.className = "worksheet-error";
+      error.setAttribute("role", "status");
+      card.append(error);
+      inputs.addEventListener("input", () => {
+        clearTimeout(card.worksheetTimer);
+        card.worksheetTimer = setTimeout(() => updateWorksheet(card), 180);
+      });
+      list.append(card);
+      updateWorksheet(card);
+    }
+  }
+
+  async function updateWorksheet(card) {
+    card.worksheetRequestId = (card.worksheetRequestId || 0) + 1;
+    const requestId = card.worksheetRequestId;
+    const inputs = {};
+    card.querySelectorAll("[data-input]").forEach((input) => {
+      inputs[input.dataset.input] = input.value;
+    });
+    const error = card.querySelector(".worksheet-error");
+    error.textContent = "";
+    try {
+      const result = await request("/api/worksheet", {
+        name: card.dataset.worksheet,
+        inputs,
+      });
+      if (requestId !== card.worksheetRequestId) return;
+      const outputs = card.querySelector(".worksheet-results");
+      outputs.replaceChildren();
+      for (const item of result.outputs) {
+        const value = document.createElement("div");
+        value.className = "worksheet-result";
+        const name = document.createElement("small");
+        name.textContent = item.name;
+        const amount = document.createElement("strong");
+        amount.textContent = item.value;
+        value.append(name, amount);
+        outputs.append(value);
+      }
+      const graphs = card.querySelector(".worksheet-graphs");
+      graphs.replaceChildren();
+      for (const graph of result.graphs) {
+        const figure = document.createElement("div");
+        figure.className = "worksheet-graph";
+        figure.innerHTML = graph.svg;
+        graphs.append(figure);
+      }
+    } catch (requestError) {
+      if (requestId !== card.worksheetRequestId) return;
+      error.textContent = requestError.message;
     }
   }
 
@@ -870,6 +984,7 @@
   }
 
   document.querySelectorAll(".tab").forEach((tab) => tab.addEventListener("click", () => setPanel(tab.dataset.panel)));
+  $("#refresh-worksheets").addEventListener("click", refreshState);
   document.querySelectorAll(".node-add").forEach((button) => button.addEventListener("click", () => addNode(button.dataset.node)));
   $("#run-script").addEventListener("click", () => runSource(editor.value));
   $("#run-graph").addEventListener("click", () => {

@@ -159,6 +159,32 @@ h1 { margin: 4px 0 0; color: #37434d; font: 600 19px Manrope, sans-serif; letter
 .chart-preview p { color: var(--muted); font-size: 11px; }
 #chart-3d-fields { display: flex; flex-direction: column; gap: 9px; }
 #chart-3d-fields[hidden] { display: none; }
+.worksheets-panel { padding: 18px 22px 14px; gap: 10px; overflow: auto; }
+.worksheets-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.worksheets-heading h1 { font-size: 19px; }
+.worksheets-intro { max-width: 860px; margin: 0; color: var(--muted); font-size: 11px; line-height: 1.6; }
+.worksheets-intro code, .worksheet-empty code { color: var(--accent-strong); font-family: "DM Mono", monospace; }
+.worksheet-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); align-content: start; gap: 12px; }
+.worksheet-empty { color: var(--muted); font-size: 11px; }
+.worksheet-card { min-width: 0; padding: 15px; border: 1px solid var(--line); border-radius: 9px; background: var(--panel); }
+.worksheet-card h2 { margin: 0; color: var(--ink); font: 600 16px Manrope, sans-serif; }
+.worksheet-description { margin: 5px 0 12px; color: var(--muted); font-size: 11px; line-height: 1.5; }
+.worksheet-inputs { display: grid; grid-template-columns: repeat(auto-fit, minmax(155px, 1fr)); gap: 8px; }
+.worksheet-field { min-width: 0; display: flex; flex-direction: column; gap: 4px; color: var(--muted); font-size: 10px; }
+.worksheet-field small { overflow-wrap: anywhere; color: var(--faint); }
+.worksheet-value { display: flex; align-items: center; gap: 6px; }
+.worksheet-value input { min-width: 0; width: 100%; height: 31px; padding: 0 8px; border: 1px solid var(--line); border-radius: 5px; color: var(--ink); background: var(--surface); font: 11px "DM Mono", monospace; }
+.worksheet-value span { flex: 0 0 auto; color: var(--muted); font: 10px "DM Mono", monospace; }
+.worksheet-results { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+.worksheet-result { min-width: 115px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); }
+.worksheet-result small { display: block; color: var(--muted); font: 9px "DM Mono", monospace; }
+.worksheet-result strong { display: block; margin-top: 3px; color: var(--ink); font: 600 12px "DM Mono", monospace; }
+.worksheet-graph { margin-top: 12px; overflow: auto; border: 1px solid var(--line); border-radius: 6px; background: white; }
+.worksheet-graph svg { display: block; width: 100%; height: auto; }
+.worksheet-error { min-height: 16px; margin-top: 7px; color: var(--red); white-space: pre-wrap; font: 10px/1.45 "DM Mono", monospace; }
+body.dark .worksheet-card, body.dark .worksheet-result { background: var(--panel); }
+body.dark .worksheet-value input { border-color: var(--line); color: var(--ink); background: var(--surface); }
+body.dark .worksheet-graph { background: #fff; }
 .blueprint-toolbar { padding-bottom: 10px; display: grid; grid-template-columns: 165px minmax(0, 1fr); align-items: center; gap: 10px; }
 .blueprint-title h1 { font-size: 18px; }
 .node-tools { display: flex; flex-wrap: wrap; align-items: center; gap: 5px; }

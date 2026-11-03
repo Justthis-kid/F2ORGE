@@ -1,8 +1,9 @@
 # F²ORGE (Formula Forge)
 
-A unit-safe engineering programming language where reusable equations become solvers, documentation,
-portable graphs, and standalone offline calculators. Everything is local files: no cloud, no
-accounts, no database, and **no dependencies beyond Python's standard library**.
+A unit-safe engineering programming language where reusable equations and native engineering
+worksheets become live calculations, solvers, documentation, portable graphs, and standalone offline
+calculators. Everything is local files: no cloud, no accounts, no database, and **no dependencies
+beyond Python's standard library**.
 
 ```
 eq Force {
@@ -146,7 +147,11 @@ python -m f2orge run examples/force.forge
 `forge browser` starts a browser-based engineering workspace at `http://127.0.0.1:8765` and opens
 it automatically. It is served only from your own computer; no cloud service or external assets are
 used. The browser workspace includes a script editor, persistent command window, variable/equation
-list, Blueprint canvas, table-based Chart Studio, and a softer dark theme. In the **Charts** tab,
+list, Blueprint canvas, table-based Chart Studio, native engineering worksheets, and a softer dark
+theme. Declare worksheets directly in `.forge` source with `worksheet`, `input`, `output`, and
+optional `graph` declarations; running the source creates live unit-aware controls in the
+**Worksheets** tab. See [the language reference](docs/language.md#native-engineering-worksheets) and
+[`examples/flight-worksheet.forge`](examples/flight-worksheet.forge). In the **Charts** tab,
 edit a table as CSV or import a local CSV file, then create 2D line, scatter/point, or bar charts and
 interactive 3D scatter, line, or surface plots. Column headers may declare units, such as `time [s]`;
 the IDE checks numeric data and unit compatibility. 2D charts export to SVG, PNG, or offline
@@ -320,6 +325,7 @@ not block a dependable language and solver.
 | Variables, arithmetic (`+ - * / ^`), scientific functions, and built-in constants | Implemented |
 | Built-in units, conversions, dimensional analysis, and unit-safety errors | Implemented |
 | First-class equations with inferred inputs/outputs, named calls, metadata, imports, and exports | Implemented |
+| Native worksheets with unit-declared inputs, calculated outputs, descriptions, and graph sweeps | Implemented |
 | Equation documentation and reusable standard-library formulas | Documentation implemented; formula library growing |
 | Solve for a variable, rearrange equations, and report missing information | Implemented |
 | CLI execution, interactive shell, local files, and explanatory source locations | Implemented |
@@ -335,18 +341,23 @@ not block a dependable language and solver.
 | Python, C++, MicroPython, and TI-84 BASIC generation for scalar scripts | Initial implementation; generated code uses SI numbers and omits unit checks |
 | PNG/PDF graph export and MATLAB-style interactive plot windows | Implemented |
 | Generated native calculator forms and standalone desktop calculator apps | Implemented |
+| Offline browser/desktop IDE with live worksheet controls and SVG graph previews | Implemented |
 
 ### Advanced and long-term features
 
 | Capability | Status |
 |---|---|
-| Interactive engineering worksheets and domain objects (`rocket`, `motor`, `battery`) | Later |
-| Offline desktop IDE, browser IDE, and standalone Windows executable build | Initial implementation |
+| Engineering domain objects (`rocket`, `motor`, `battery`) | Future work |
+| Standalone Windows executable build and additional IDE refinements | In progress |
 | Equation marketplace | Later; not recommended for v1 |
 
 The [language reference](docs/language.md), [dictionary](docs/dictionary.md), and
-[tutorial](docs/tutorial.md) describe the implemented language and companion tools. Interactive
-engineering worksheets and domain objects are future features, not part of this implementation.
+[tutorial](docs/tutorial.md) describe the implemented language and companion tools. Worksheets are
+first-class Forge source declarations, not a staged UI wizard: define `worksheet`, `input`, `output`,
+and optional `graph` statements in a `.forge` file, then run it to populate the IDE's **Worksheets**
+tab with live, unit-aware controls. See
+[`examples/flight-worksheet.forge`](examples/flight-worksheet.forge) for a complete example.
+Engineering domain objects such as `rocket`, `motor`, and `battery` remain future work.
 
 ## How it works
 

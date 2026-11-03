@@ -40,7 +40,11 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert "function startResize" in script
             assert "Share this variable?" in script
             assert "async function showPlot" in script
+            assert "function renderWorksheets(worksheets)" in script
+            assert "function updateWorksheet(card)" in script
             assert 'id="charts-panel"' in page
+            assert 'id="worksheets-panel"' in page
+            assert 'data-panel="worksheets-panel"' in page
             assert 'id="chart-csv"' in page
             assert '"/api/chart"' in script
 
@@ -180,6 +184,41 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert error.code == 403
         else:
             raise AssertionError("cross-origin execution requests should be rejected")
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_worksheet_endpoint_evaluates_native_source_and_returns_graph_svg():
+    server = _LoopbackServer(("127.0.0.1", 0), _handler(DesktopSession()))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    try:
+        source = '''worksheet Flight {
+    description = "Newton's second law"
+    input mass : kg = 150 kg
+    input acceleration : m/s^2 = 9.81 m/s^2
+    output force = mass * acceleration
+    graph force over acceleration from 0 m/s^2 to 20 m/s^2
+}'''
+        payload = json.dumps({"source": source}).encode("utf-8")
+        request = Request(f"{base_url}/api/execute", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            result = json.loads(response.read())
+        assert result["success"] is True
+        assert result["worksheets"][0]["name"] == "Flight"
+        assert result["worksheets"][0]["inputs"][0]["default"] == 150
+
+        payload = json.dumps({"name": "Flight", "inputs": {"mass": 50}}).encode("utf-8")
+        request = Request(f"{base_url}/api/worksheet", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            result = json.loads(response.read())
+        assert result["success"] is True
+        assert result["outputs"] == [{"name": "force", "value": "490.5 N"}]
+        assert "<svg " in result["graphs"][0]["svg"]
+        assert len(result["graphs"][0]["points"]) == 51
     finally:
         server.shutdown()
         server.server_close()

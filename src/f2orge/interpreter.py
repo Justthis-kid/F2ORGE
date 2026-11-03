@@ -2,19 +2,21 @@
 from __future__ import annotations
 
 import difflib
+import math
 import os
 from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from . import syntax as S
 from .equation import Equation
-from .errors import ForgeError, ForgeImportError, ForgeNameError, Source
+from .errors import ForgeError, ForgeImportError, ForgeNameError, Source, UnitError
 from .evaluator import Evaluator, Scope
 from .linear_algebra import Value
 from .parser import parse
 from .printer import format_equation
 from .quantity import Quantity
 from .solver import solve
+from .units import Unit
 
 STDLIB_DIR = Path(__file__).resolve().parent / "stdlib"
 
@@ -38,6 +40,8 @@ class Interpreter:
         self.echo = echo        # print assignments too (the shell does)
         self.variables: Dict[str, Value] = {}
         self.equations: Dict[str, Equation] = {}
+        self.worksheets: Dict[str, S.WorksheetDef] = {}
+        self._worksheet_defaults: Dict[str, Dict[str, Quantity]] = {}
         self.evaluator = Evaluator(self.equations.get)
         self.evaluator.equation_names = lambda: list(self.equations)
         self.evaluator.import_hint = self._import_hint
@@ -89,6 +93,8 @@ class Interpreter:
             eq = Equation(st, source)
             eq.validate(self.evaluator)
             self.equations[eq.name] = eq
+        elif isinstance(st, S.WorksheetDef):
+            self._define_worksheet(st)
         elif isinstance(st, S.Solve):
             self._solve(st)
         elif isinstance(st, S.Import):
@@ -97,6 +103,220 @@ class Interpreter:
             self._export(st)
         else:  # pragma: no cover
             raise TypeError(st)
+
+    def _define_worksheet(self, definition: S.WorksheetDef) -> None:
+        inputs = [item for item in definition.items if isinstance(item, S.WorksheetInput)]
+        outputs = [item for item in definition.items if isinstance(item, S.WorksheetOutput)]
+        graphs = [item for item in definition.items if isinstance(item, S.WorksheetGraph)]
+        if not inputs:
+            raise ForgeError("a worksheet must declare at least one input", definition.span,
+                             title="Invalid worksheet")
+        if not outputs:
+            raise ForgeError("a worksheet must declare at least one output", definition.span,
+                             title="Invalid worksheet")
+        input_names = [item.name for item in inputs]
+        output_names = [item.name for item in outputs]
+        if len(set(input_names)) != len(input_names):
+            raise ForgeError("input names must be unique", definition.span, title="Invalid worksheet")
+        if len(set(output_names)) != len(output_names):
+            raise ForgeError("output names must be unique", definition.span, title="Invalid worksheet")
+        duplicate_names = set(input_names) & set(output_names)
+        if duplicate_names:
+            name = sorted(duplicate_names)[0]
+            raise ForgeError(f"'{name}' cannot be both an input and an output",
+                             definition.span, title="Invalid worksheet")
+        for graph in graphs:
+            if graph.variable not in input_names:
+                raise ForgeError(f"graph sweep '{graph.variable}' is not a worksheet input",
+                                 graph.span, title="Invalid worksheet")
+            if graph.output not in output_names:
+                raise ForgeError(f"graph output '{graph.output}' is not a worksheet output",
+                                 graph.span, title="Invalid worksheet")
+
+        defaults: Dict[str, Quantity] = {}
+        constant_scope = Scope({}, constants=True)
+        for item in inputs:
+            default = self.evaluator.eval(item.default, constant_scope)
+            if not isinstance(default, Quantity):
+                raise ForgeError(f"default for input '{item.name}' must be a scalar quantity",
+                                 item.span, title="Invalid worksheet input")
+            if default.is_plain and not item.unit.dim.is_dimensionless:
+                default = Quantity.from_unit(default.value, item.unit)
+            if default.dim != item.unit.dim:
+                raise UnitError(
+                    f"default for input '{item.name}' expects {item.unit.symbol() or 'dimensionless'}",
+                    item.span,
+                    title="Worksheet unit mismatch",
+                )
+            defaults[item.name] = default.to(item.unit)
+
+        previous_definition = self.worksheets.get(definition.name)
+        previous_defaults = self._worksheet_defaults.get(definition.name)
+        self.worksheets[definition.name] = definition
+        self._worksheet_defaults[definition.name] = defaults
+        try:
+            self._evaluate_worksheet(definition, defaults, samples=2)
+        except ForgeError:
+            if previous_definition is None or previous_defaults is None:
+                del self.worksheets[definition.name]
+                del self._worksheet_defaults[definition.name]
+            else:
+                self.worksheets[definition.name] = previous_definition
+                self._worksheet_defaults[definition.name] = previous_defaults
+            raise
+
+    def worksheet_schema(self, name: str) -> Dict[str, object]:
+        definition = self.worksheets.get(name)
+        if definition is None:
+            raise ForgeNameError(f"There is no worksheet named '{name}'",
+                                 title="Unknown worksheet")
+        metadata = {item.key: item.value for item in definition.items if isinstance(item, S.Meta)}
+        defaults = self._worksheet_defaults[name]
+        inputs = [
+            {
+                "name": item.name,
+                "unit": item.unit.symbol(),
+                "default": defaults[item.name].magnitude(item.unit),
+                "description": item.doc or "",
+            }
+            for item in definition.items if isinstance(item, S.WorksheetInput)
+        ]
+        outputs = [
+            {"name": item.name}
+            for item in definition.items if isinstance(item, S.WorksheetOutput)
+        ]
+        graphs = [
+            {"output": item.output, "variable": item.variable}
+            for item in definition.items if isinstance(item, S.WorksheetGraph)
+        ]
+        return {
+            "name": definition.name,
+            "description": metadata.get("description", ""),
+            "inputs": inputs,
+            "outputs": outputs,
+            "graphs": graphs,
+        }
+
+    def evaluate_worksheet(self, name: str, values: Optional[Dict[str, object]] = None) -> Dict[str, object]:
+        definition = self.worksheets.get(name)
+        if definition is None:
+            raise ForgeNameError(f"There is no worksheet named '{name}'",
+                                 title="Unknown worksheet")
+        supplied = values or {}
+        if not isinstance(supplied, dict):
+            raise ForgeError("worksheet values must be an object", title="Invalid worksheet input")
+        defaults = self._worksheet_defaults[name]
+        input_items = [item for item in definition.items if isinstance(item, S.WorksheetInput)]
+        known = {item.name for item in input_items}
+        unexpected = set(supplied) - known
+        if unexpected:
+            raise ForgeError(f"unknown worksheet input '{sorted(unexpected)[0]}'",
+                             title="Invalid worksheet input")
+        inputs = dict(defaults)
+        for item in input_items:
+            if item.name not in supplied:
+                continue
+            raw_value = supplied[item.name]
+            if isinstance(raw_value, bool):
+                raise ForgeError(f"value for '{item.name}' must be a finite number",
+                                 item.span, title="Invalid worksheet input")
+            try:
+                magnitude = float(raw_value)
+            except (TypeError, ValueError):
+                raise ForgeError(f"value for '{item.name}' must be a finite number",
+                                 item.span, title="Invalid worksheet input") from None
+            if not math.isfinite(magnitude):
+                raise ForgeError(f"value for '{item.name}' must be a finite number",
+                                 item.span, title="Invalid worksheet input")
+            inputs[item.name] = Quantity.from_unit(magnitude, item.unit)
+        return self._evaluate_worksheet(definition, inputs, samples=51)
+
+    def _evaluate_worksheet(self, definition: S.WorksheetDef,
+                            inputs: Dict[str, Quantity], samples: int) -> Dict[str, object]:
+        values: Dict[str, Value] = dict(inputs)
+        scope = Scope(values, constants=True)
+        output_values: Dict[str, Quantity] = {}
+        for item in definition.items:
+            if not isinstance(item, S.WorksheetOutput):
+                continue
+            value = self.evaluator.eval(item.expr, scope)
+            if not isinstance(value, Quantity):
+                raise ForgeError(f"output '{item.name}' must be a scalar quantity",
+                                 item.span, title="Invalid worksheet output")
+            values[item.name] = value
+            output_values[item.name] = value
+        rendered_outputs = [
+            {"name": item.name, "value": str(output_values[item.name])}
+            for item in definition.items if isinstance(item, S.WorksheetOutput)
+        ]
+        rendered_graphs = []
+        for graph in (item for item in definition.items if isinstance(item, S.WorksheetGraph)):
+            input_item = next(item for item in definition.items
+                              if isinstance(item, S.WorksheetInput) and item.name == graph.variable)
+            start_value = self.evaluator.eval(graph.start, scope)
+            stop_value = self.evaluator.eval(graph.stop, scope)
+            if not isinstance(start_value, Quantity) or not isinstance(stop_value, Quantity):
+                raise ForgeError("graph range endpoints must be scalar quantities",
+                                 graph.span, title="Invalid worksheet graph")
+            if start_value.dim != input_item.unit.dim or stop_value.dim != input_item.unit.dim:
+                raise UnitError(
+                    f"graph range for '{graph.variable}' must use {input_item.unit.symbol() or 'dimensionless'}",
+                    graph.span,
+                    title="Worksheet unit mismatch",
+                )
+            start = start_value.magnitude(input_item.unit)
+            stop = stop_value.magnitude(input_item.unit)
+            if not math.isfinite(start) or not math.isfinite(stop) or start == stop:
+                raise ForgeError("graph range must have distinct finite endpoints",
+                                 graph.span, title="Invalid worksheet graph")
+            points: List[Tuple[float, float]] = []
+            output_unit = None
+            for index in range(samples):
+                magnitude = start + (stop - start) * index / (samples - 1)
+                sample_inputs = dict(inputs)
+                sample_inputs[graph.variable] = Quantity.from_unit(magnitude, input_item.unit)
+                sample_values: Dict[str, Value] = dict(sample_inputs)
+                sample_scope = Scope(sample_values, constants=True)
+                sample_output: Optional[Quantity] = None
+                for item in definition.items:
+                    if isinstance(item, S.WorksheetOutput):
+                        sample_result = self.evaluator.eval(item.expr, sample_scope)
+                        if not isinstance(sample_result, Quantity):
+                            raise ForgeError(f"output '{item.name}' must be a scalar quantity",
+                                             item.span, title="Invalid worksheet output")
+                        sample_values[item.name] = sample_result
+                        if item.name == graph.output:
+                            sample_output = sample_result
+                if sample_output is None:
+                    raise ForgeError(f"graph output '{graph.output}' was not calculated",
+                                     graph.span, title="Invalid worksheet graph")
+                if output_unit is None:
+                    output_unit = sample_output.unit or Unit.from_dim(sample_output.dim)
+                if output_unit is not None:
+                    if sample_output.dim != output_unit.dim:
+                        raise UnitError(f"graph output '{graph.output}' changes dimensions",
+                                        graph.span, title="Worksheet unit mismatch")
+                    y_value = sample_output.magnitude(output_unit)
+                else:
+                    y_value = sample_output.value
+                if not math.isfinite(y_value):
+                    raise ForgeError("graph produced a non-finite value",
+                                     graph.span, title="Invalid worksheet graph")
+                points.append((magnitude, y_value))
+            rendered_graphs.append({
+                "output": graph.output,
+                "variable": graph.variable,
+                "xLabel": f"{graph.variable} ({input_item.unit.symbol()})"
+                          if input_item.unit.symbol() else graph.variable,
+                "yLabel": f"{graph.output} ({output_unit.symbol()})"
+                          if output_unit is not None and output_unit.symbol() else graph.output,
+                "points": points,
+            })
+        return {"name": definition.name, "inputs": {
+            name: value.magnitude(next(item.unit for item in definition.items
+                                       if isinstance(item, S.WorksheetInput) and item.name == name))
+            for name, value in inputs.items()
+        }, "outputs": rendered_outputs, "graphs": rendered_graphs}
 
     def _import_hint(self, name: str) -> Optional[str]:
         for d in self.search_dirs():

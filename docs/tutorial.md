@@ -166,6 +166,26 @@ Project imports use paths relative to the importing file. Library equations can 
 name, for example `import Force`. Use `export Force` in a program to write an equation to a `.eq`
 file. Equation files contain equation definitions and imports, not arbitrary top-level calculations.
 
+## Lesson 10 — Create a native engineering worksheet
+
+Open `examples/flight-worksheet.forge` in the offline IDE and run it. The worksheet is declared in
+Forge source, not assembled through a sequence of UI steps:
+
+```forge
+worksheet Flight {
+    description = "Explore how mass and acceleration affect force."
+    input mass : kg = 150 kg "Vehicle mass"
+    input acceleration : m/s^2 = 9.81 m/s^2 "Acceleration"
+    output force = mass * acceleration
+    graph force over acceleration from 0 m/s^2 to 20 m/s^2
+}
+```
+
+Select **Worksheets** to see fields generated from the `input` declarations. Change a value and the
+unit-aware output and graph update automatically. The `output` declaration names the calculated
+quantity; `graph` sweeps acceleration across the specified range. Edit the Forge source to change
+the worksheet definition, then run it again to refresh the IDE view.
+
 ## Review questions
 
 1. What unit should acceleration use in `F = m * a` if mass is in kilograms and force in newtons?
@@ -174,7 +194,9 @@ file. Equation files contain equation definitions and imports, not arbitrary top
 4. What input is swept in the graph command above, and what do the `--curve` settings compare?
 5. What restriction applies to `inverse(matrix)`?
 6. What must a table contain before it can be rendered as a 3D surface?
+7. Which worksheet declarations define a live input, a calculated result, and a graph sweep?
 
 **Suggested answers:** `m/s²`; mass (`kg`) and acceleration (`m/s²`); addition needs like dimensions
 but multiplication combines dimensions; acceleration is swept while two fixed masses are compared;
-the matrix must be square and dimensionless; one Z value for every pair in a rectangular X/Y grid.
+the matrix must be square and dimensionless; one Z value for every pair in a rectangular X/Y grid;
+`input`, `output`, and `graph`.

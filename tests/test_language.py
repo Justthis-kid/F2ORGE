@@ -1,7 +1,7 @@
 import pytest
 
 from f2orge import Interpreter
-from f2orge.errors import ForgeEvalError, ForgeNameError, ForgeSyntaxError
+from f2orge.errors import ForgeError, ForgeEvalError, ForgeNameError, ForgeSyntaxError, UnitError
 from helpers import TempDir, error_of, run, run_it
 
 
@@ -318,3 +318,63 @@ def test_assignments_are_silent_in_programs_and_echoed_in_the_shell():
     it = Interpreter(out=out.append, echo=True)
     it.run("x = 5 m", "<shell>")
     assert out == ["x = 5 m"]
+
+
+def test_native_worksheet_defaults_outputs_and_graph_sweeps():
+    source = '''worksheet Flight {
+    description = "Newton's second law"
+    input mass : kg = 150 kg "Vehicle mass"
+    input acceleration : m/s^2 = 9.81 m/s^2
+    output force = mass * acceleration
+    graph force over acceleration from 0 m/s^2 to 20 m/s^2
+}'''
+    interpreter = Interpreter(out=lambda _text: None)
+    interpreter.run(source)
+
+    schema = interpreter.worksheet_schema("Flight")
+    assert schema["description"] == "Newton's second law"
+    assert schema["inputs"] == [
+        {"name": "mass", "unit": "kg", "default": 150.0, "description": "Vehicle mass"},
+        {"name": "acceleration", "unit": "m/s²", "default": 9.81, "description": ""},
+    ]
+    result = interpreter.evaluate_worksheet("Flight", {"mass": 50})
+    assert result["inputs"] == {"mass": 50.0, "acceleration": 9.81}
+    assert result["outputs"] == [{"name": "force", "value": "490.5 N"}]
+    graph = result["graphs"][0]
+    assert graph["xLabel"] == "acceleration (m/s²)"
+    assert graph["yLabel"] == "force (N)"
+    assert graph["points"][0] == (0, 0)
+    assert graph["points"][-1] == (20, 1000)
+
+
+def test_worksheet_rejects_input_defaults_with_incompatible_units():
+    interpreter = Interpreter(out=lambda _text: None)
+    with pytest.raises(UnitError, match="expects kg"):
+        interpreter.run('''worksheet Invalid {
+    input mass : kg = 5 m
+    output weight = mass
+}''')
+
+
+def test_worksheet_rejects_unknown_sweep_inputs_and_outputs():
+    interpreter = Interpreter(out=lambda _text: None)
+    with pytest.raises(ForgeError, match="graph sweep 'speed' is not a worksheet input"):
+        interpreter.run('''worksheet Invalid {
+    input mass : kg = 5 kg
+    output weight = mass
+    graph weight over speed from 0 m/s to 10 m/s
+}''')
+
+
+def test_invalid_worksheet_redefinition_preserves_previous_definition():
+    interpreter = Interpreter(out=lambda _text: None)
+    interpreter.run('''worksheet Flight {
+    input mass : kg = 150 kg
+    output weight = mass * 9.81 m/s^2
+}''')
+    with pytest.raises(UnitError):
+        interpreter.run('''worksheet Flight {
+    input mass : kg = 5 m
+    output weight = mass
+}''')
+    assert interpreter.evaluate_worksheet("Flight")["inputs"] == {"mass": 150.0}

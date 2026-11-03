@@ -1,0 +1,7 @@
+worksheet Flight {
+    description = "Explore how vehicle mass and acceleration affect force."
+    input mass : kg = 150 kg "Vehicle mass"
+    input acceleration : m/s^2 = 9.81 m/s^2 "Acceleration"
+    output force = mass * acceleration
+    graph force over acceleration from 0 m/s^2 to 20 m/s^2
+}

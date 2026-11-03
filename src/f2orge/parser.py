@@ -114,6 +114,8 @@ class Parser:
             kw = t.text
             if kw == "eq":
                 return self.eq_def()
+            if kw == "worksheet":
+                return self.worksheet_def()
             if kw == "import":
                 return self.import_stmt()
             if kw == "export":
@@ -255,6 +257,77 @@ class Parser:
         self.skip_nl()
         rhs = self.expression()
         return S.Relation(lhs, rhs, self.span_from(start))
+
+    def worksheet_def(self):
+        kw = self.next()
+        name = self.expect_ident("a name for the worksheet")
+        self.skip_nl()
+        self.expect_op("{", "Expected '{' to start the worksheet body")
+        items: List[object] = []
+        while True:
+            self.skip_separators()
+            if self.is_op("}"):
+                break
+            if self.peek().kind == "eof":
+                self.fail(f"The worksheet '{name.text}' is missing its closing '}}'", kw)
+            items.append(self.worksheet_item())
+            token = self.peek()
+            if not (token.kind == "nl" or (token.kind == "op" and token.text in ";}")):
+                self.fail(f"Unexpected {self.describe(token)}; this worksheet item should end here", token)
+        self.expect_op("}")
+        return S.WorksheetDef(name.text, tuple(items), self.span_from(kw.start),
+                              Span(self.source, name.start, name.end))
+
+    def worksheet_item(self):
+        token = self.peek()
+        if token.kind == "ident" and token.text == "input":
+            start = self.next()
+            name = self.expect_ident("an input name")
+            self.expect_op(":", f"Expected ':' after input '{name.text}'")
+            unit = self.make_unit(self.parse_unit_atoms(tight=False))
+            self.expect_op("=", f"Expected '=' and a default value for input '{name.text}'")
+            self.skip_nl()
+            default = self.expression()
+            doc = self.next().value if self.peek().kind == "str" else None
+            return S.WorksheetInput(name.text, unit, default, doc, self.span_from(start.start))
+        if token.kind == "ident" and token.text == "output":
+            start = self.next()
+            name = self.expect_ident("an output name")
+            self.expect_op("=", f"Expected '=' after output '{name.text}'")
+            self.skip_nl()
+            expression = self.expression()
+            return S.WorksheetOutput(name.text, expression, self.span_from(start.start))
+        if token.kind == "ident" and token.text == "graph":
+            start = self.next()
+            output = self.expect_ident("an output to graph")
+            over = self.peek()
+            if over.kind != "ident" or over.text != "over":
+                self.fail("Expected 'over' and the input to sweep", over)
+            self.next()
+            variable = self.expect_ident("an input to sweep")
+            from_token = self.peek()
+            if from_token.kind != "ident" or from_token.text != "from":
+                self.fail("Expected 'from' and the start of the sweep", from_token)
+            self.next()
+            start_value = self.expression()
+            to_token = self.peek()
+            if to_token.kind != "ident" or to_token.text != "to":
+                self.fail("Expected 'to' and the end of the sweep", to_token)
+            self.next()
+            stop_value = self.expression()
+            return S.WorksheetGraph(output.text, variable.text, start_value, stop_value,
+                                    self.span_from(start.start))
+        if token.kind == "ident" and self.is_op("=", 1):
+            j = self._index(0) + 2
+            while self.toks[j].kind == "nl":
+                j += 1
+            if self.toks[j].kind == "str":
+                key = self.next()
+                self.next()
+                self.skip_nl()
+                value = self.next()
+                return S.Meta(key.text, value.value, self.span_from(key.start))
+        self.fail("Expected input, output, graph, or worksheet metadata", token)
 
     def decl(self):
         name = self.next()

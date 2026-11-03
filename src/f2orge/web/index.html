@@ -39,6 +39,7 @@
           <button class="tab active" data-panel="script-panel"><span class="tab-icon">▤</span> Script</button>
           <button class="tab" data-panel="blueprint-panel"><span class="tab-icon">◇</span> Blueprint <span class="new-badge">VISUAL</span></button>
           <button class="tab" data-panel="charts-panel"><span class="tab-icon">▥</span> Charts</button>
+          <button class="tab" data-panel="worksheets-panel"><span class="tab-icon">▧</span> Worksheets</button>
           <div class="tab-spacer"></div>
           <button class="button subtle compact" id="open-file">Open</button>
           <input type="file" id="file-picker" accept=".forge,.eq" hidden>
@@ -154,6 +155,19 @@ force</textarea>
             </div>
           </div>
           <div id="chart-preview" class="chart-preview"><p>Render a table to preview its chart.</p></div>
+        </section>
+
+        <section id="worksheets-panel" class="panel worksheets-panel">
+          <div class="worksheets-heading">
+            <div><span class="eyebrow">NATIVE FORGE SOURCE</span><h1>Engineering worksheets</h1></div>
+            <button id="refresh-worksheets" class="button subtle compact">Refresh from source</button>
+          </div>
+          <p class="worksheets-intro">Worksheets are defined in the F²ORGE program itself. Edit the
+            <code>worksheet Name { ... }</code> block in Script, then run it; this panel is a live view
+            of those declared inputs, outputs, and graphs.</p>
+          <div id="worksheet-list" class="worksheet-list">
+            <p class="worksheet-empty">Add a <code>worksheet</code> definition to your Forge script and press Run.</p>
+          </div>
         </section>
 
         <section class="console-dock">

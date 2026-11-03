@@ -19,12 +19,38 @@ Blank lines and `#` or `//` comments are ignored. Names are case-sensitive.
 | `print expression, "text"` | Print one or more expressions and/or string literals. |
 | `convert expression -> unit` | Convert and display a quantity in another compatible unit. |
 | `eq Name { ... }` | Define a reusable equation. |
+| `worksheet Name { ... }` | Define unit-checked inputs, calculated outputs, and optional graph sweeps for the IDE. |
 | `solve Name for variable { given = value }` | Solve an equation for one unknown from known values. |
 | `import Name` / `import ./path/File.eq` | Load an equation by library/project name or file path. |
 | `export Name` | Write a defined equation to a `.eq` file. |
 
 F²ORGE does not currently have general-purpose `if`, `for`, or `while` statements, functions defined
 by the user, or string interpolation. The word `for` is part of `solve ... for ...`, not a loop.
+
+## Native engineering worksheets
+
+A worksheet is a first-class Forge declaration, not a series of steps in a UI wizard. The `.forge`
+source is authoritative; the offline IDE renders the declared controls and recalculates them when
+inputs change. Open `examples/flight-worksheet.forge` in the IDE and run it to see the worksheet.
+
+```forge
+worksheet Flight {
+    description = "Newton's second law"
+    input mass : kg = 150 kg "Vehicle mass"
+    input acceleration : m/s^2 = 9.81 m/s^2 "Acceleration"
+    output force = mass * acceleration
+    graph force over acceleration from 0 m/s^2 to 20 m/s^2
+}
+```
+
+Each `input` declares a unique name, required unit, default quantity, and optional quoted help text.
+Defaults may use constants but not other worksheet inputs. Each `output` is a scalar expression using
+worksheet inputs and earlier outputs; output names must be unique and cannot shadow input names.
+Optional `description = "..."` metadata is shown above the controls. A `graph` declaration sweeps one
+input across two finite, distinct endpoints with compatible units and plots the named output. The IDE
+validates entered numeric magnitudes against the declared input units, updates outputs live, and
+renders each declared graph. Worksheets run from the local IDE and do not change the behavior of
+ordinary script execution or equation calls.
 
 ## Values and units
 
