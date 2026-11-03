@@ -40,15 +40,17 @@ pytest for running the tests.
 
 ### 1. Install
 
-First, change into the directory where you downloaded or cloned F²ORGE. Replace the sample path
-below if you saved it somewhere else. For example, if it is in `Downloads/f2orge`, use
-`cd ~/Downloads/f2orge` on macOS/Linux or `cd "$HOME\Downloads\f2orge"` in PowerShell. The folder
-you enter must contain `pyproject.toml`.
+First, change into the project root: the directory that contains `pyproject.toml`, `src`, and
+`tools`. If you extracted a ZIP and the first folder does not contain those files, enter the nested
+project folder. For example, if the files are in `Downloads/f2orge/F2ORGE`, use
+`cd ~/Downloads/f2orge/F2ORGE` on macOS/Linux or
+`cd "$HOME\Downloads\f2orge\F2ORGE"` in PowerShell. Replace `F2ORGE` with the actual extracted
+folder name if it differs.
 
 **Windows (PowerShell):**
 
 ```powershell
-cd "$HOME\Downloads\f2orge"
+cd "$HOME\Downloads\f2orge\F2ORGE"
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
 python -m pip install -e .
@@ -57,7 +59,7 @@ python -m pip install -e .
 If PowerShell says script execution is disabled when activating, open Command Prompt and run:
 
 ```bat
-cd "%USERPROFILE%\Downloads\f2orge"
+cd "%USERPROFILE%\Downloads\f2orge\F2ORGE"
 .venv\Scripts\activate.bat
 python -m pip install -e .
 ```
@@ -65,7 +67,7 @@ python -m pip install -e .
 **macOS / Linux:**
 
 ```bash
-cd ~/Downloads/f2orge
+cd ~/Downloads/f2orge/F2ORGE
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip setuptools
@@ -129,10 +131,13 @@ distinct scalar variables are not supported by the TI-BASIC target.
 On Windows, install the desktop and build extras, then run:
 
 ```powershell
+cd "$HOME\Downloads\f2orge\F2ORGE"
 python -m pip install -e ".[desktop,build]"
 python tools/build_windows.py
 ```
 
+Run both commands from the project root (the folder containing `pyproject.toml` and
+`tools\build_windows.py`); the build writes the updated executable to `dist\F2ORGE.exe`.
 The generated `dist/F2ORGE.exe` is a windowed, one-file desktop app with the F²ORGE cube icon.
 It uses the installed Microsoft WebView2 runtime. Build it on Windows; the generated executable
 does not require a separate Python installation.
