@@ -1,7 +1,30 @@
-# F²ORGE language reference (v0.1)
+# F²ORGE language reference
+
+This reference describes the implemented language, not planned syntax. For a guided first project,
+see the [F²ORGE tutorial](tutorial.md); for a categorized vocabulary of units, constants, operators,
+and concepts, see the [language dictionary](dictionary.md).
 
 File types: `.forge` programs and `.eq` equation files. A program is a list of statements, one per
 line (or separated by `;`). `#` and `//` start a comment.
+
+## Program structure and statements
+
+Programs execute from top to bottom. Use one statement per line or separate statements with `;`.
+Blank lines and `#` or `//` comments are ignored. Names are case-sensitive.
+
+| Form | Meaning |
+|---|---|
+| `name = expression` | Assign or replace a variable. |
+| `expression` | Evaluate and display the result; also stores it in `ans`. |
+| `print expression, "text"` | Print one or more expressions and/or string literals. |
+| `convert expression -> unit` | Convert and display a quantity in another compatible unit. |
+| `eq Name { ... }` | Define a reusable equation. |
+| `solve Name for variable { given = value }` | Solve an equation for one unknown from known values. |
+| `import Name` / `import ./path/File.eq` | Load an equation by library/project name or file path. |
+| `export Name` | Write a defined equation to a `.eq` file. |
+
+F²ORGE does not currently have general-purpose `if`, `for`, or `while` statements, functions defined
+by the user, or string interpolation. The word `for` is part of `solve ... for ...`, not a loop.
 
 ## Values and units
 
@@ -21,6 +44,9 @@ resistance = 4.7 kohm
 * Temperatures: `degC` and `degF` are *scales* (25 degC = 298.15 K). Subtracting two of them gives a
   difference in `K`; adding two absolute temperatures is an error; inside compound units
   (`W/(m*degC)`) they mean a temperature *difference*.
+* Unit products, quotients, and exponents can be grouped with parentheses, for example `W/(m*K)`.
+  Unit multiplication/division/exponent operators are written tightly (`kg*m/s^2`); expression
+  operators are separated by spaces when the distinction might be unclear.
 
 ### What gets printed
 
@@ -36,6 +62,17 @@ Multiplying or dividing two quantities gives simplified SI, using a named unit w
 Functions: `sin cos tan asin acos atan atan2 exp ln log sqrt abs min max`.
 `log` is base 10. `sqrt(16 m^2)` is `4 m`. Trig and log arguments must be dimensionless.
 `inverse` and `transpose` operate on matrices.
+
+| Function | Inputs and result |
+|---|---|
+| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions; `x` is dimensionless (use `deg` or `rad` for angles). |
+| `asin(x)`, `acos(x)`, `atan(x)` | Inverse trigonometric functions; input and result are dimensionless angles in radians. |
+| `atan2(y, x)` | Two-argument angle function; arguments must be dimensionless. |
+| `exp(x)`, `ln(x)`, `log(x)` | Exponential, natural log, base-10 log; argument must be dimensionless. |
+| `sqrt(x)` | Square root; unit exponents are halved and must remain representable. |
+| `abs(x)` | Absolute magnitude of a scalar quantity. |
+| `min(a, b, ...)`, `max(a, b, ...)` | Select the smallest/largest compatible scalar quantity; at least two arguments. |
+| `transpose(A)`, `inverse(A)` | Matrix operations; inverse requires a square, dimensionless matrix. |
 
 ### Vectors and matrices
 
@@ -92,6 +129,8 @@ eq Force {
   `R : ohm` makes R a resistance input, as in `Ohm.eq`.
 * Equations are pure: they never see your top-level variables, only their inputs and the constants.
 * Equations can call other equations.
+* Metadata uses `key = "text"` inside an equation; `description` is conventional and is used by
+  generated equation documentation. A declaration's optional quoted text documents that variable.
 
 ### Calling
 
@@ -121,6 +160,8 @@ solve Force for a {
 3. If the unknown appears twice (`t + t^2 = 6`) it solves numerically, which needs the unknown's unit
    declared (`t : dimensionless`). Positive solutions are preferred; other roots are reported.
 4. If information is missing it says exactly what: `cannot find F from F = m * a: m, a are unknown`.
+5. Numeric solving is not a general simultaneous-system solver. Equations requiring several
+   independent unknowns at once will report what information is missing.
 
 ## Files
 
@@ -134,6 +175,8 @@ Standard library:
 `Force KineticEnergy Work Power Momentum Density PressureFromForce HydrostaticPressure SpringForce
 Bernoulli DeltaV IdealGas Ohm ElectricalPower CapacitorEnergy Lift CircularOrbit`.
 An `.eq` file may contain only `eq` definitions and `import`s.
+Imports search relative to the importing file and the project, configured equation paths, and the
+bundled standard library. File paths in `import` are relative to the importing file.
 
 ## Graph export
 
@@ -151,6 +194,22 @@ Provide every other input with `--set NAME=VALUE`; `--samples` controls the poin
 curves while varying one other input; every curve option must name the same input. The SVG uses the
 declared or inferred SI output unit, variable documentation as axis labels when available, and a
 legend for multiple curves. It can be opened in a browser on any supported platform.
+
+The offline IDE's **Charts** tab plots editable table data or imported CSV files. Use the first CSV
+row for column names and optionally append units in brackets, such as `time [s],distance [m]`.
+Choose a 2D line, scatter/points, or bar chart; bar charts use the first selected column as
+categories, while line and scatter charts require a numeric horizontal column. Select up to 10
+numeric value series. Series must have compatible dimensions and are converted to the first
+selected series' unit for display. Cells must be finite numbers for numeric axes; category cells
+may be text. The table editor can add rows and columns.
+
+The same table workflow supports interactive **3D scatter**, **3D line**, and **3D surface** plots.
+Choose separate X, Y, and Z columns for scatter/line. A surface requires a complete rectangular
+grid with exactly one Z value for each X/Y pair. Drag to rotate and scroll to zoom; the reset
+control restores the initial camera. All table-based plots run locally without a chart service or
+external JavaScript library. 2D charts export to SVG, PNG, and standalone interactive HTML; use
+**Print / PDF** to print or save a chart as a PDF in the browser. 3D charts export as standalone
+interactive HTML, and can also be printed from the browser.
 
 Add `--interactive` to create a self-contained HTML graph instead. It works offline and supports
 wheel/trackpad zoom, drag-to-pan, reset, and toggling individual curves:
@@ -205,7 +264,7 @@ Run `forge browser` to open the local browser-based IDE at `http://127.0.0.1:876
 is an alias. The application is served on loopback by the local F²ORGE process and does not use a
 cloud service or remote assets. It includes a script editor, command window, workspace list, and a
 Blueprint canvas with draggable, connectable, deletable, resizable nodes. A **Script** node accepts
-arbitrary F²ORGE statements, including equation definitions, imports, solves, conversions, loops,
+arbitrary supported F²ORGE statements, including equation definitions, imports, solves, conversions,
 prints, assignments, and expressions. Script nodes run before Output nodes, so graph Inputs can
 consume variables created by script blocks. Connect typed nodes for visual expression building.
 When an Input and Output use the same variable name, the IDE asks you to confirm sharing; the graph
@@ -215,6 +274,11 @@ with version 1 files. Use **Open**/**Save file** for `.forge` or `.eq` programs 
 **Open graph**/**Save graph** for `.fgraph` diagrams. `--no-open`
 prevents automatic browser launch; `--port 0` requests an available local port. Stop the server
 with Ctrl+C.
+
+The **Charts** tab is for data-driven charts rather than Blueprint diagrams. Paste or edit CSV
+data, import a local `.csv` file, select columns and chart type, then render. Units in column headers
+are validated and appear on axes. Export 2D charts as SVG, PNG, or offline HTML; 3D charts as
+offline HTML. Print / PDF uses the browser's print dialog.
 
 ## Scope beyond the language core
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import json
+import secrets
 import threading
 import webbrowser
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -38,19 +39,21 @@ def _workspace(session: DesktopSession) -> Dict[str, object]:
 
 def _handler(session: DesktopSession):
     session_lock = threading.RLock()
+    chart_previews: Dict[str, str] = {}
 
     class BrowserIDEHandler(BaseHTTPRequestHandler):
         server_version = "F2ORGE-IDE"
 
-        def _send(self, status: int, content_type: str, payload: bytes) -> None:
+        def _send(self, status: int, content_type: str, payload: bytes, *, embeddable: bool = False) -> None:
             self.send_response(status)
             self.send_header("Content-Type", content_type)
             self.send_header("Content-Length", str(len(payload)))
             self.send_header("X-Content-Type-Options", "nosniff")
             self.send_header("X-Frame-Options", "DENY")
+            frame_policy = "frame-ancestors 'self'" if embeddable else "frame-ancestors 'none'"
             self.send_header("Content-Security-Policy",
                              "default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; "
-                             "connect-src 'self'; img-src 'self' data:; base-uri 'none'; frame-ancestors 'none'")
+                             f"connect-src 'self'; img-src 'self' data: blob:; base-uri 'none'; {frame_policy}")
             self.send_header("Cache-Control", "no-store")
             self.end_headers()
             self.wfile.write(payload)
@@ -89,6 +92,25 @@ def _handler(session: DesktopSession):
                     state = _workspace(session)
                 self._json(200, state)
                 return
+            if self.path == "/chart3d.js":
+                from .charts import THREE_D_SCRIPT
+
+                self._send(200, "text/javascript; charset=utf-8", THREE_D_SCRIPT.encode("utf-8"))
+                return
+            preview_prefix = "/api/chart-preview/"
+            if self.path.startswith(preview_prefix):
+                with session_lock:
+                    preview = chart_previews.get(self.path[len(preview_prefix):])
+                if preview is None:
+                    self._send(404, "text/plain; charset=utf-8", b"Chart preview expired")
+                else:
+                    self._send(
+                        200,
+                        "text/html; charset=utf-8",
+                        preview.encode("utf-8"),
+                        embeddable=True,
+                    )
+                return
             asset = _ASSETS.get(self.path)
             if asset is None:
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
@@ -111,7 +133,7 @@ def _handler(session: DesktopSession):
                     state = _workspace(session)
                 self._json(200, {"success": True, **state})
                 return
-            if self.path not in ("/api/execute", "/api/transpile", "/api/plot"):
+            if self.path not in ("/api/execute", "/api/transpile", "/api/plot", "/api/chart"):
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
                 return
             if not self.headers.get("Content-Type", "").lower().startswith("application/json"):
@@ -123,11 +145,22 @@ def _handler(session: DesktopSession):
                     self._json(413, {"success": False, "output": "Request is too large"})
                     return
                 data = json.loads(self.rfile.read(size).decode("utf-8"))
-                field = "command" if self.path == "/api/plot" else "source"
-                source = data.get(field) if isinstance(data, dict) else None
-                if not isinstance(source, str):
-                    self._json(400, {"success": False, "output": f"Expected a {field} string"})
-                    return
+                if self.path == "/api/chart":
+                    if not isinstance(data, dict):
+                        self._json(400, {"success": False, "output": "Expected a chart object"})
+                        return
+                    chart_type, table, x_name = data.get("type"), data.get("table"), data.get("x")
+                    if not isinstance(chart_type, str) or not isinstance(x_name, str):
+                        self._json(400, {"success": False, "output": "Chart type and x column are required"})
+                        return
+                    y_names = data.get("y")
+                    axes = data.get("axes")
+                else:
+                    field = "command" if self.path == "/api/plot" else "source"
+                    source = data.get(field) if isinstance(data, dict) else None
+                    if not isinstance(source, str):
+                        self._json(400, {"success": False, "output": f"Expected a {field} string"})
+                        return
                 if self.path == "/api/transpile":
                     target = data.get("target")
                     if target not in ("python", "micropython", "cpp", "ti-basic"):
@@ -138,6 +171,42 @@ def _handler(session: DesktopSession):
                         return
             except (UnicodeDecodeError, json.JSONDecodeError, ValueError):
                 self._json(400, {"success": False, "output": "Invalid JSON request"})
+                return
+            if self.path == "/api/chart":
+                from .charts import (
+                    ChartError,
+                    render_3d_html,
+                    render_3d_preview_html,
+                    render_table_html,
+                    render_table_svg,
+                )
+
+                try:
+                    if chart_type.endswith("3d"):
+                        if not isinstance(axes, list) or len(axes) != 3 or not all(
+                            isinstance(axis, str) for axis in axes
+                        ):
+                            raise ChartError("select three columns for the 3D axes")
+                        output = render_3d_html(table, chart_type, axes[0], axes[1], axes[2])
+                        preview = render_3d_preview_html(table, chart_type, axes[0], axes[1], axes[2])
+                        svg = ""
+                        preview_id = secrets.token_urlsafe(18)
+                        with session_lock:
+                            chart_previews[preview_id] = preview
+                            while len(chart_previews) > 8:
+                                chart_previews.pop(next(iter(chart_previews)))
+                    else:
+                        svg = render_table_svg(table, chart_type, x_name, y_names)
+                        output = render_table_html(svg, f"{chart_type.title()} table chart")
+                        preview_id = ""
+                    self._json(200, {
+                        "success": True,
+                        "output": output,
+                        "previewUrl": f"/api/chart-preview/{preview_id}" if preview_id else "",
+                        "svg": svg,
+                    })
+                except ChartError as err:
+                    self._json(400, {"success": False, "output": err.format()})
                 return
             if self.path == "/api/transpile":
                 from .transpile import transpile

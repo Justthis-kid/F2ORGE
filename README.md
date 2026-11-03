@@ -22,6 +22,14 @@ solve Force for a {
 #    | ^^^^^^^^^^^ cannot add mass (kg) and length (m)
 ```
 
+## Learn and reference
+
+- [Guided tutorial](docs/tutorial.md) — a sequence of lessons, examples, and review questions.
+- [Language reference](docs/language.md) — syntax and behavior for scripts, units, equations, solving,
+  vectors, matrices, graphing, and calculators.
+- [Language dictionary](docs/dictionary.md) — built-in vocabulary, functions, constants, unit names,
+  prefixes, dimensions, and CLI commands.
+
 ## Instruction manual: install, launch, and use F²ORGE
 
 F²ORGE requires Python 3.9 or newer. Open a terminal in the extracted project folder (the folder
@@ -91,7 +99,7 @@ WebView2 runtime. The Blueprint tab uses a graph-paper grid: add
 Input, Constant, Function, arithmetic, Output, and Script nodes. Drag node headers to reposition;
 drag a node’s lower-right corner to resize it. Select a node and choose **Delete Node** (or press
 Delete) to remove it. Connect output pins to input pins. A Script node accepts arbitrary F²ORGE
-statements, so equations, imports, solves, conversions, loops, prints, assignments, and expressions
+statements, so equations, imports, solves, conversions, prints, assignments, and expressions
 can all be authored in the Blueprint canvas. Script nodes run before generated Output nodes.
 Input nodes reference workspace variables; an Input and Output sharing a name prompts for
 confirmation and orders dependent outputs automatically. Save and reopen `.fgraph` files.
@@ -138,7 +146,12 @@ python -m f2orge run examples/force.forge
 `forge browser` starts a browser-based engineering workspace at `http://127.0.0.1:8765` and opens
 it automatically. It is served only from your own computer; no cloud service or external assets are
 used. The browser workspace includes a script editor, persistent command window, variable/equation
-list, Blueprint canvas, and a softer dark theme. Blueprint nodes can be repositioned, resized, and
+list, Blueprint canvas, table-based Chart Studio, and a softer dark theme. In the **Charts** tab,
+edit a table as CSV or import a local CSV file, then create 2D line, scatter/point, or bar charts and
+interactive 3D scatter, line, or surface plots. Column headers may declare units, such as `time [s]`;
+the IDE checks numeric data and unit compatibility. 2D charts export to SVG, PNG, or offline
+interactive HTML, while 3D charts export to offline interactive HTML. Use Print / PDF to open the
+browser's print dialog. Blueprint nodes can be repositioned, resized, and
 deleted; Script nodes support any F²ORGE statement, while name-shared Input/Output nodes prompt for
 confirmation. Use **Open** and **Save file** to load and download
 `.forge`/`.eq` programs, or **Open graph** and **Save graph** for `.fgraph` diagrams. Use
@@ -311,6 +324,7 @@ not block a dependable language and solver.
 | Solve for a variable, rearrange equations, and report missing information | Implemented |
 | CLI execution, interactive shell, local files, and explanatory source locations | Implemented |
 | VS Code syntax highlighting | Available |
+| Vectors and matrices: arithmetic, products, transpose, inverse | Initial implementation; inverse is dimensionless-only |
 
 ### Companion tools (useful, but not required for the language core)
 
@@ -326,12 +340,13 @@ not block a dependable language and solver.
 
 | Capability | Status |
 |---|---|
-| Vectors and matrices: arithmetic, products, transpose, inverse | Initial implementation; inverse is dimensionless-only |
 | Interactive engineering worksheets and domain objects (`rocket`, `motor`, `battery`) | Later |
 | Offline desktop IDE, browser IDE, and standalone Windows executable build | Initial implementation |
 | Equation marketplace | Later; not recommended for v1 |
 
-The full language is described in [docs/language.md](docs/language.md).
+The [language reference](docs/language.md), [dictionary](docs/dictionary.md), and
+[tutorial](docs/tutorial.md) describe the implemented language and companion tools. Interactive
+engineering worksheets and domain objects are future features, not part of this implementation.
 
 ## How it works
 

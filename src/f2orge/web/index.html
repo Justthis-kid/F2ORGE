@@ -38,6 +38,7 @@
         <nav class="tabs">
           <button class="tab active" data-panel="script-panel"><span class="tab-icon">▤</span> Script</button>
           <button class="tab" data-panel="blueprint-panel"><span class="tab-icon">◇</span> Blueprint <span class="new-badge">VISUAL</span></button>
+          <button class="tab" data-panel="charts-panel"><span class="tab-icon">▥</span> Charts</button>
           <div class="tab-spacer"></div>
           <button class="button subtle compact" id="open-file">Open</button>
           <input type="file" id="file-picker" accept=".forge,.eq" hidden>
@@ -104,6 +105,55 @@ force</textarea>
             </div>
           </div>
           <div class="canvas-status"><span id="graph-message">Ready</span><span>SCROLL TO PAN · DRAG NODE HEADERS · RESIZE FROM THE CORNER · CONNECT OUTPUTS TO INPUTS</span></div>
+        </section>
+
+        <section id="charts-panel" class="panel charts-panel">
+          <div class="charts-heading">
+            <div><span class="eyebrow">TABLE-DRIVEN PLOTTING</span><h1>Chart studio</h1></div>
+            <div class="chart-toolbar">
+              <button id="import-csv" class="button subtle compact">Import CSV</button>
+              <input id="csv-picker" type="file" accept=".csv,text/csv" hidden>
+              <button id="add-chart-row" class="button subtle compact">Add row</button>
+              <button id="add-chart-column" class="button subtle compact">Add column</button>
+              <button id="render-chart" class="button primary compact">Render chart</button>
+            </div>
+          </div>
+          <div class="chart-workspace">
+            <div class="chart-data-pane">
+              <label for="chart-csv">Editable CSV table · add units to headers like <code>time [s]</code></label>
+              <textarea id="chart-csv" spellcheck="false" aria-label="Editable chart data table">time [s],distance [m],height [m]
+0,0,1
+1,3,2
+2,8,4
+3,15,7
+4,24,11</textarea>
+              <div id="chart-error" class="chart-error" role="status"></div>
+            </div>
+            <div class="chart-options">
+              <label>Chart type<select id="chart-type">
+                <option value="line">2D line</option><option value="scatter">2D scatter / points</option>
+                <option value="bar">2D bar</option><option value="scatter3d">3D scatter</option>
+                <option value="line3d">3D line</option><option value="surface3d">3D surface</option>
+              </select></label>
+              <label>Horizontal / X<select id="chart-x"></select></label>
+              <div id="chart-series-field"><span>Value series / Y</span><div id="chart-series" class="chart-series"></div></div>
+              <div id="chart-3d-fields" hidden>
+                <label>Y axis<select id="chart-y3"></select></label>
+                <label>Z axis<select id="chart-z3"></select></label>
+              </div>
+              <p>Numeric values support units in headers. 3D surfaces require one z value for every pair on a rectangular x/y grid.</p>
+            </div>
+          </div>
+          <div class="chart-preview-head">
+            <span class="section-title">PREVIEW</span>
+            <div class="chart-exports">
+              <button id="download-chart-svg" class="button subtle compact" disabled>SVG</button>
+              <button id="download-chart-png" class="button subtle compact" disabled>PNG</button>
+              <button id="download-chart-html" class="button subtle compact" disabled>HTML</button>
+              <button id="print-chart" class="button subtle compact" disabled>Print / PDF</button>
+            </div>
+          </div>
+          <div id="chart-preview" class="chart-preview"><p>Render a table to preview its chart.</p></div>
         </section>
 
         <section class="console-dock">

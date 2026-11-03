@@ -18,6 +18,7 @@
   let historyIndex = 0;
   let busy = false;
   let generatedTarget = "python";
+  let chartResult = null;
 
   const nodeInputs = {
     Input: 0, Constant: 0, Script: 0, Function: 1, Add: 2, Subtract: 2,
@@ -99,6 +100,178 @@
     }
   }
 
+  function parseCsv(text) {
+      const records = [];
+      let row = [], cell = "", quoted = false;
+      for (let i = 0; i < text.length; i += 1) {
+        const char = text[i];
+        if (quoted && char === '"' && text[i + 1] === '"') { cell += '"'; i += 1; }
+        else if (char === '"') quoted = !quoted;
+        else if (char === "," && !quoted) { row.push(cell.trim()); cell = ""; }
+        else if ((char === "\n" || char === "\r") && !quoted) {
+          if (char === "\r" && text[i + 1] === "\n") i += 1;
+          row.push(cell.trim()); cell = "";
+          if (row.some((value) => value !== "")) records.push(row);
+          row = [];
+        } else cell += char;
+      }
+      if (quoted) throw new Error("CSV contains an unclosed quoted field.");
+      row.push(cell.trim());
+      if (row.some((value) => value !== "")) records.push(row);
+      if (records.length < 2) throw new Error("Add a header row and at least one data row.");
+      const width = records[0].length;
+      if (!width || records.some((item) => item.length !== width)) {
+        throw new Error("Every CSV row must have the same number of columns.");
+      }
+      const columns = records[0].map((header) => {
+        const match = header.match(/^(.+?)\s*\[([^\]]+)\]\s*$/);
+        return { name: (match ? match[1] : header).trim(), unit: match ? match[2].trim() : "" };
+      });
+      return { columns, rows: records.slice(1) };
+    }
+
+  function refreshChartSelectors() {
+      const data = parseCsv($("#chart-csv").value);
+      const previous = {
+        x: $("#chart-x").value, y: $("#chart-y3").value, z: $("#chart-z3").value,
+      };
+      const options = data.columns.map((column, index) =>
+        `<option value="${index}">${escapeHtml(column.name)}${column.unit ? ` (${escapeHtml(column.unit)})` : ""}</option>`
+      ).join("");
+      for (const id of ["#chart-x", "#chart-y3", "#chart-z3"]) $(id).innerHTML = options;
+      $("#chart-x").value = previous.x !== "" && Number(previous.x) < data.columns.length ? previous.x : "0";
+      $("#chart-y3").value = previous.y !== "" && Number(previous.y) < data.columns.length
+        ? previous.y : String(Math.min(1, data.columns.length - 1));
+      $("#chart-z3").value = previous.z !== "" && Number(previous.z) < data.columns.length
+        ? previous.z : String(Math.min(2, data.columns.length - 1));
+      const xIndex = Number($("#chart-x").value || 0);
+      let defaultSeriesCount = 0;
+      $("#chart-series").replaceChildren(...data.columns.map((column, index) => {
+        const label = document.createElement("label");
+        const checkbox = document.createElement("input");
+        checkbox.type = "checkbox";
+        checkbox.value = column.name;
+        checkbox.checked = index !== xIndex && defaultSeriesCount < 10;
+        if (checkbox.checked) defaultSeriesCount += 1;
+        checkbox.disabled = index === xIndex;
+        label.append(checkbox, document.createTextNode(
+          `${column.name}${column.unit ? ` (${column.unit})` : ""}`,
+        ));
+        return label;
+      }));
+      $("#chart-series-field").hidden = $("#chart-type").value.endsWith("3d");
+      $("#chart-3d-fields").hidden = !$("#chart-type").value.endsWith("3d");
+      $("#chart-error").textContent = "";
+    }
+
+  function serializeCsv(records) {
+      return records.map((row) => row.map((value) => {
+        const text = String(value ?? "");
+        return /[",\r\n]/.test(text) ? `"${text.replace(/"/g, '""')}"` : text;
+      }).join(",")).join("\n");
+    }
+
+    function invalidateChart() {
+      chartResult = null;
+      $("#chart-error").textContent = "";
+      for (const id of ["#download-chart-svg", "#download-chart-png", "#download-chart-html", "#print-chart"]) {
+        $(id).disabled = true;
+      }
+      $("#chart-preview").innerHTML = "<p>Render the updated table and options to preview a chart.</p>";
+    }
+
+  function escapeHtml(value) {
+      return String(value).replace(/[&<>"']/g, (char) => ({
+        "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;",
+      })[char]);
+    }
+
+  async function renderChart() {
+      $("#chart-error").textContent = "";
+      try {
+        const parsed = parseCsv($("#chart-csv").value);
+        const type = $("#chart-type").value;
+        const columnIndex = (id) => {
+          const index = Number($(id).value);
+          if (!Number.isInteger(index) || !parsed.columns[index]) throw new Error("Select a valid table column.");
+          return parsed.columns[index].name;
+        };
+        const requestData = {
+          table: parsed,
+          type,
+          x: columnIndex("#chart-x"),
+          y: [...$("#chart-series").querySelectorAll("input:checked")].map((input) => input.value),
+        };
+        if (type.endsWith("3d")) requestData.axes = [requestData.x, columnIndex("#chart-y3"), columnIndex("#chart-z3")];
+        const result = await request("/api/chart", requestData);
+        chartResult = { ...result, type };
+        $("#download-chart-svg").disabled = !result.svg;
+        $("#download-chart-png").disabled = !result.svg;
+        $("#download-chart-html").disabled = false;
+        $("#print-chart").disabled = false;
+        const preview = $("#chart-preview");
+        preview.replaceChildren();
+        if (type.endsWith("3d")) {
+          const frame = document.createElement("iframe");
+          frame.title = "Interactive three-dimensional chart";
+          frame.setAttribute("sandbox", "allow-scripts");
+          frame.src = result.previewUrl;
+          preview.append(frame);
+        } else {
+          preview.innerHTML = result.svg;
+          chartResult.svg = result.svg;
+        }
+      } catch (error) {
+        chartResult = null;
+        $("#download-chart-svg").disabled = true;
+        $("#download-chart-png").disabled = true;
+        $("#download-chart-html").disabled = true;
+        $("#print-chart").disabled = true;
+        $("#chart-preview").innerHTML = "<p>Chart could not be rendered.</p>";
+        $("#chart-error").textContent = error.message;
+      }
+    }
+
+  function downloadChart(filename, content, mimeType) {
+      const link = document.createElement("a");
+      link.href = URL.createObjectURL(new Blob([content], { type: mimeType }));
+      link.download = filename;
+      link.click();
+      setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+    }
+
+  function chartHtml() {
+      if (!chartResult) throw new Error("Render a chart before exporting.");
+      return chartResult.output;
+    }
+
+  async function downloadChartPng() {
+      if (!chartResult || !chartResult.svg) throw new Error("PNG export is available for 2D charts.");
+      const image = new Image();
+      const source = URL.createObjectURL(new Blob([chartResult.svg], { type: "image/svg+xml" }));
+      image.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = 1800;
+          canvas.height = 1120;
+          const context = canvas.getContext("2d");
+          if (!context) throw new Error("Canvas is unavailable for PNG export.");
+          context.fillStyle = "#ffffff";
+          context.fillRect(0, 0, canvas.width, canvas.height);
+          context.drawImage(image, 0, 0, canvas.width, canvas.height);
+          canvas.toBlob((blob) => {
+            if (blob) downloadChart("f2orge-chart.png", blob, "image/png");
+            else $("#chart-error").textContent = "Could not encode chart as PNG.";
+            URL.revokeObjectURL(source);
+          }, "image/png");
+        } catch (error) {
+          URL.revokeObjectURL(source);
+          $("#chart-error").textContent = error.message;
+        }
+      };
+      image.onerror = () => { URL.revokeObjectURL(source); $("#chart-error").textContent = "Could not render chart as PNG."; };
+      image.src = source;
+    }
   function pushConsole(text, kind = "") {
     const welcome = consoleLog.querySelector(".console-welcome");
     if (welcome) welcome.remove();
@@ -262,7 +435,7 @@
       } else if (kind === "Script") {
         const result = await showGraphDialog({
           title: "Add F²ORGE script",
-          copy: "Write any valid F²ORGE statements here: equations, imports, solves, conversions, loops, prints, or expressions. Script nodes run before connected output nodes.",
+          copy: "Write any valid F²ORGE statements here: equations, imports, solves, conversions, assignments, prints, or expressions. Script nodes run before connected output nodes.",
           confirm: "Add script",
           value: "# F²ORGE statements\n",
           multiline: true,
@@ -758,6 +931,92 @@
     if (selectedId === null) setStatus("Select a node to delete");
     else removeNode(selectedId);
   });
+  $("#chart-csv").addEventListener("input", () => {
+    invalidateChart();
+    try { refreshChartSelectors(); }
+    catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#chart-type").addEventListener("change", () => {
+    invalidateChart();
+    try { refreshChartSelectors(); }
+    catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#chart-x").addEventListener("change", () => {
+    invalidateChart();
+    try { refreshChartSelectors(); }
+    catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#chart-series").addEventListener("change", (event) => {
+    const selected = $("#chart-series").querySelectorAll("input:checked").length;
+    const overLimit = selected > 10;
+    if (overLimit) event.target.checked = false;
+    invalidateChart();
+    if (overLimit) $("#chart-error").textContent = "Select no more than 10 value series.";
+  });
+  $("#chart-y3").addEventListener("change", invalidateChart);
+  $("#chart-z3").addEventListener("change", invalidateChart);
+  $("#add-chart-row").addEventListener("click", () => {
+    invalidateChart();
+    try {
+      const parsed = parseCsv($("#chart-csv").value);
+      parsed.rows.push(parsed.columns.map(() => ""));
+      $("#chart-csv").value = serializeCsv([
+        parsed.columns.map((column) => column.name + (column.unit ? ` [${column.unit}]` : "")),
+        ...parsed.rows,
+      ]);
+      refreshChartSelectors();
+    } catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#add-chart-column").addEventListener("click", () => {
+    invalidateChart();
+    try {
+      const parsed = parseCsv($("#chart-csv").value);
+      let name = "column";
+      let suffix = 2;
+      while (parsed.columns.some((column) => column.name === name)) name = `column${suffix++}`;
+      parsed.columns.push({ name, unit: "" });
+      parsed.rows.forEach((row) => row.push(""));
+      $("#chart-csv").value = serializeCsv([
+        parsed.columns.map((column) => column.name + (column.unit ? ` [${column.unit}]` : "")),
+        ...parsed.rows,
+      ]);
+      refreshChartSelectors();
+    } catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#import-csv").addEventListener("click", () => $("#csv-picker").click());
+  $("#csv-picker").addEventListener("change", async (event) => {
+    const file = event.target.files[0];
+    if (!file) return;
+    try {
+      invalidateChart();
+      $("#chart-csv").value = await file.text();
+      refreshChartSelectors();
+    } catch (error) { $("#chart-error").textContent = `Could not import CSV: ${error.message}`; }
+    finally { event.target.value = ""; }
+  });
+  $("#render-chart").addEventListener("click", renderChart);
+  $("#download-chart-svg").addEventListener("click", () => {
+    try {
+      if (!chartResult?.svg) throw new Error("SVG export is available for 2D charts.");
+      downloadChart("f2orge-chart.svg", chartResult.svg, "image/svg+xml");
+    } catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#download-chart-html").addEventListener("click", () => {
+    try { downloadChart("f2orge-chart.html", chartHtml(), "text/html"); }
+    catch (error) { $("#chart-error").textContent = error.message; }
+  });
+  $("#download-chart-png").addEventListener("click", () => {
+    downloadChartPng().catch((error) => { $("#chart-error").textContent = error.message; });
+  });
+  $("#print-chart").addEventListener("click", () => {
+    try {
+      const url = URL.createObjectURL(new Blob([chartHtml()], { type: "text/html" }));
+      const printWindow = window.open(url, "_blank");
+      if (!printWindow) throw new Error("Allow pop-ups to print or save this chart as PDF.");
+      printWindow.addEventListener("load", () => printWindow.print(), { once: true });
+      setTimeout(() => URL.revokeObjectURL(url), 60000);
+    } catch (error) { $("#chart-error").textContent = error.message; }
+  });
   $("#theme-toggle").addEventListener("click", () => {
     document.body.classList.toggle("dark");
     localStorage.setItem("f2orge-theme", document.body.classList.contains("dark") ? "dark" : "light");
@@ -844,5 +1103,6 @@
   $("#line-count").textContent = `${initialLineCount} ${initialLineCount === 1 ? "line" : "lines"}`;
   updateDirty();
   renderGraph();
+  try { refreshChartSelectors(); } catch (error) { $("#chart-error").textContent = error.message; }
   refreshState();
 })();

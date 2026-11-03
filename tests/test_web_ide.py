@@ -40,10 +40,16 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert "function startResize" in script
             assert "Share this variable?" in script
             assert "async function showPlot" in script
+            assert 'id="charts-panel"' in page
+            assert 'id="chart-csv"' in page
+            assert '"/api/chart"' in script
 
         with urlopen(f"{base_url}/brand.svg") as response:
             assert response.headers["Content-Type"].startswith("image/svg+xml")
             assert "F²" in response.read().decode("utf-8")
+        with urlopen(f"{base_url}/chart3d.js") as response:
+            assert response.headers["Content-Type"].startswith("text/javascript")
+            assert "function draw()" in response.read().decode("utf-8")
         payload = json.dumps({"source": "force = 150 kg * 9.81 m/s^2\nforce\n", "target": "python"}).encode("utf-8")
         request = Request(f"{base_url}/api/transpile", payload, {"Content-Type": "application/json"})
         with urlopen(request) as response:
@@ -79,6 +85,48 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
         assert result["success"] is True
         assert result["title"] == "position (m) vs time (s)"
         assert "<svg " in result["svg"] and "<polyline " in result["svg"]
+
+        chart_table = {
+            "columns": [
+                {"name": "time", "unit": "s"}, {"name": "distance", "unit": "m"},
+                {"name": "height", "unit": "m"},
+            ],
+            "rows": [["0", "0", "1"], ["1", "3", "2"], ["2", "8", "4"]],
+        }
+        payload = json.dumps({
+            "table": chart_table, "type": "scatter", "x": "time", "y": ["distance"],
+        }).encode("utf-8")
+        request = Request(f"{base_url}/api/chart", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            result = json.loads(response.read())
+        assert result["success"] is True
+        assert "<circle " in result["svg"] and "<svg " in result["output"]
+
+        payload = json.dumps({
+            "table": chart_table, "type": "scatter3d", "x": "time",
+            "axes": ["time", "distance", "height"],
+        }).encode("utf-8")
+        request = Request(f"{base_url}/api/chart", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            result = json.loads(response.read())
+        assert result["success"] is True and "<canvas" in result["output"]
+        assert result["previewUrl"].startswith("/api/chart-preview/")
+        with urlopen(f"{base_url}{result['previewUrl']}") as response:
+            preview = response.read().decode("utf-8")
+            assert response.headers["Content-Security-Policy"].endswith("frame-ancestors 'self'")
+            assert '<script src="/chart3d.js"></script>' in preview
+
+        payload = json.dumps({
+            "table": chart_table, "type": "line", "x": "missing", "y": ["distance"],
+        }).encode("utf-8")
+        request = Request(f"{base_url}/api/chart", payload, {"Content-Type": "application/json"})
+        try:
+            urlopen(request)
+        except HTTPError as error:
+            assert error.code == 400
+            assert "unknown column 'missing'" in json.loads(error.read())["output"]
+        else:
+            raise AssertionError("invalid chart columns should be rejected")
 
         request = Request(f"{base_url}/api/clear", b"{}", {"Content-Type": "application/json"})
         with urlopen(request) as response:
