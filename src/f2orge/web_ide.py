@@ -19,6 +19,8 @@ _ASSETS = {
     "/app.css": ("app.css", "text/css; charset=utf-8"),
     "/app.js": ("app.js", "text/javascript; charset=utf-8"),
     "/brand.svg": ("brand.svg", "image/svg+xml"),
+    "/brand.ico": ("brand.ico", "image/x-icon"),
+    "/favicon.ico": ("brand.ico", "image/x-icon"),
 }
 
 

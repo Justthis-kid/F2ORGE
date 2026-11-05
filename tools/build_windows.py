@@ -6,34 +6,15 @@ import sys
 import tempfile
 from pathlib import Path
 
-from PIL import Image, ImageDraw, ImageFont
+import shutil
 
 
 ROOT = Path(__file__).resolve().parents[1]
 
 
 def create_icon(path: Path) -> None:
-    size = 512
-    image = Image.new("RGBA", (size, size), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((14, 14, 498, 498), radius=80, fill="#d97835")
-
-    top = [(256, 55), (449, 159), (256, 264), (63, 159)]
-    left = [(63, 159), (256, 264), (256, 463), (63, 358)]
-    right = [(449, 159), (256, 264), (256, 463), (449, 358)]
-    draw.polygon(top, fill="#f3a05e")
-    draw.polygon(left, fill="#dd7a35")
-    draw.polygon(right, fill="#b95723")
-    for points in (top, left, right):
-        draw.line(points + [points[0]], fill="#9d481e", width=9, joint="curve")
-
-    font_path = Path(r"C:\Windows\Fonts\segoeuib.ttf")
-    font = ImageFont.truetype(str(font_path), 76) if font_path.exists() else ImageFont.load_default()
-    text = Image.new("RGBA", (190, 100), (0, 0, 0, 0))
-    ImageDraw.Draw(text).text((12, 4), "F²", font=font, fill="#fff7ed", stroke_width=1)
-    text = text.rotate(-27, resample=Image.Resampling.BICUBIC, expand=True)
-    image.alpha_composite(text, (74, 224))
-    image.save(path, format="ICO", sizes=[(256, 256), (128, 128), (64, 64), (32, 32), (16, 16)])
+    # Preserve the supplied brand icon unchanged in Windows builds.
+    shutil.copyfile(ROOT / "src" / "f2orge" / "web" / "brand.ico", path)
 
 
 def main() -> int:

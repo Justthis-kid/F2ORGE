@@ -48,6 +48,12 @@ def test_browser_ide_serves_offline_assets_and_local_kernel():
             assert 'id="chart-csv"' in page
             assert '"/api/chart"' in script
 
+        assert 'rel="icon" type="image/x-icon" href="/brand.ico"' in page
+        assert 'class="brand-mark" src="/brand.ico"' in page
+        for icon_path in ("/brand.ico", "/favicon.ico"):
+            with urlopen(f"{base_url}{icon_path}") as response:
+                assert response.headers["Content-Type"].startswith("image/x-icon")
+                assert response.read().startswith(b"\x00\x00\x01\x00")
         with urlopen(f"{base_url}/brand.svg") as response:
             assert response.headers["Content-Type"].startswith("image/svg+xml")
             assert "F²" in response.read().decode("utf-8")
