@@ -123,8 +123,14 @@ def _build() -> None:
     _add("mph", Dim.of(L=1, T=-1), 0.44704, kind="speed")
     _add("kph", Dim.of(L=1, T=-1), 1000.0 / 3600.0, kind="speed")
     _add("kn", Dim.of(L=1, T=-1), 1852.0 / 3600.0, kind="speed", aliases=("knot",))
-    _add("rad", DIMLESS, 1.0, prefix=True, kind="angle")  # radians are dimensionless in engineering use
-    _add("deg", DIMLESS, math.pi / 180.0, kind="angle", aliases=("°",))
+    angle = Dim.of(Angle=1)
+    _add("rad", angle, 1.0, prefix=True, kind="angle")
+    _add("deg", angle, math.pi / 180.0, kind="angle", aliases=("°",))
+    _add("rev", angle, 2 * math.pi, kind="angle")
+    _add("rpm", angle / TIME, 2 * math.pi / 60, kind="angular velocity")
+    _add("dB", Dim.of(Log=1), kind="logarithmic level")
+    for currency in ("USD", "EUR", "GBP", "JPY", "CAD", "AUD"):
+        _add(currency, Dim.of(**{currency: 1}), kind="currency")
 
 
 _build()

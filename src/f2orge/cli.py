@@ -48,7 +48,33 @@ def cmd_run(args) -> int:
     except ForgeError as err:
         _report(err)
         return 1
+    if interp.plots:
+        _write_plots(interp.plots, path, args.plot_format)
     return 0
+
+
+def _write_plots(plots, source: Path, output_format: str) -> None:
+    """Write one graph file per plot statement next to the program."""
+    from .plot import render_interactive_html, render_svg, save_graph
+
+    for index, plot in enumerate(plots, start=1):
+        title, x_label, y_label = plot["title"], plot["xLabel"], plot["yLabel"]
+        series = [("", plot["points"])]
+        suffix = f"-{index}" if len(plots) > 1 else ""
+        output = source.with_name(f"{source.stem}-plot{suffix}.{output_format}")
+        try:
+            if output_format == "html":
+                page = render_interactive_html(render_svg(title, x_label, y_label, series), title, [""])
+                output.write_text(page, encoding="utf-8")
+            else:
+                save_graph(str(output), output_format, title, x_label, y_label, series)
+        except ForgeError as err:
+            _report(err)
+            continue
+        except OSError as err:
+            print(f"error: cannot write plot: {err}", file=sys.stderr)
+            continue
+        print(f"Wrote {output}")
 
 
 def cmd_shell(args) -> int:
@@ -441,7 +467,12 @@ def cmd_transpile(args) -> int:
     path = Path(args.file)
     try:
         generated = transpile(path.read_text(encoding="utf-8-sig"), args.target, str(path))
-        if args.output:
+        if args.output and Path(args.output).suffix.lower() == ".8xp":
+            from .ti84 import write_8xp
+
+            write_8xp(args.output, generated, path.stem)
+            print(f"Wrote {args.output} (tokenized TI-84 program)")
+        elif args.output:
             Path(args.output).write_text(generated, encoding="utf-8")
             print(f"Wrote {args.output}")
         else:
@@ -485,6 +516,8 @@ def build_parser() -> argparse.ArgumentParser:
     r = sub.add_parser("run", help="run a .forge program")
     r.add_argument("file")
     r.add_argument("--explain", action="store_true", help="show how each solve was rearranged")
+    r.add_argument("--plot-format", choices=("svg", "png", "pdf", "html"), default="svg",
+                   help="format for graphs drawn by plot statements (default: svg)")
     r.set_defaults(func=cmd_run)
 
     s = sub.add_parser("shell", help="interactive shell")
@@ -559,7 +592,9 @@ def build_parser() -> argparse.ArgumentParser:
                                "ti-84-basic",
                            ),
                            help="target language")
-    transpile.add_argument("-o", "--output", help="write generated code to a file")
+    transpile.add_argument("-o", "--output",
+                           help="write generated code to a file; a .8xp name writes a tokenized "
+                                "TI-84 program instead of readable BASIC")
     transpile.set_defaults(func=cmd_transpile)
 
     browser = sub.add_parser(

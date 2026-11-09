@@ -221,6 +221,21 @@ curves while varying one other input; every curve option must name the same inpu
 declared or inferred SI output unit, variable documentation as axis labels when available, and a
 legend for multiple curves. It can be opened in a browser on any supported platform.
 
+A program can also draw its own graphs with a `plot` statement:
+
+```text
+speed = linspace(0 m/s, 30 m/s, 61)
+power = 0.5 * 1200 kg/m^3 * 2.1 m^2 * 0.3 * speed^3
+plot(speed, power)
+plot(power)
+```
+
+`plot(y)` uses the sample index for the horizontal axis; `plot(x, y)` needs two vectors of the same
+length whose elements share a dimension. `forge run` writes `program-plot.svg` next to the program
+(`-plot-2`, `-plot-3`, ... for further plots) and accepts `--plot-format svg|png|pdf|html`. The
+shell prints a one-line summary, the desktop IDE opens a window per plot after the run, and the
+browser IDE opens the last plot in its interactive plot dialog.
+
 The offline IDE's **Charts** tab plots editable table data or imported CSV files. Use the first CSV
 row for column names and optionally append units in brackets, such as `time [s],distance [m]`.
 Choose a 2D line, scatter/points, or bar chart; bar charts use the first selected column as
@@ -270,7 +285,8 @@ browser IDE interface and Blueprint implementation. Install its optional depende
 `.forge` and `.eq` files, then
 press **Run** or **F5** to execute it. The workspace shows variables and equations; the command
 window runs expressions and assignments in the same session, with Up/Down command history. Use
-`plot(y)` or `plot(x, y)` on vector variables to open a native plot window. `:clear` resets the
+`plot(y)` or `plot(x, y)` on vector variables to open a native plot window, and a `plot` statement
+in a script opens its graph after the run. `:clear` resets the
 workspace. The IDE serves its bundled UI on loopback and runs locally without an internet connection.
 The **Blueprint** tab provides a graph-paper canvas with Input, Constant,
 Function, arithmetic, Script, and Output nodes. Connect output pins to input pins, then select **Run Graph**

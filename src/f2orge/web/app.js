@@ -18,6 +18,7 @@
   let historyIndex = 0;
   let busy = false;
   let generatedTarget = "python";
+  let generatedBinary = "";
   let chartResult = null;
 
   const nodeInputs = {
@@ -45,6 +46,7 @@
     try {
       const result = await request("/api/transpile", { source: editor.value, target });
       generatedTarget = target;
+      generatedBinary = result.binary || "";
       $("#transpile-title").textContent = `Generated ${targetLabel}`;
       $("#transpile-output").value = result.output;
       $("#transpile-dialog").showModal();
@@ -60,9 +62,17 @@
     try {
       const result = await request("/api/plot", { command });
       pushConsole(label, "command");
-      $("#plot-title").textContent = result.title;
+      openPlot(result.title, result.svg);
+    } catch (error) {
+      pushConsole(error.message, "error");
+    }
+  }
+
+  function openPlot(title, svgMarkup) {
+    try {
+      $("#plot-title").textContent = title;
       const content = $("#plot-content");
-      content.innerHTML = result.svg;
+      content.innerHTML = svgMarkup;
       const svg = content.querySelector("svg");
       const originalViewBox = svg.getAttribute("viewBox");
       let drag = null;
@@ -469,6 +479,13 @@
       if (label) pushConsole(label, "command");
       if (result.output) pushConsole(result.output, result.success ? "" : "error");
       $("#server-status").textContent = result.success ? "Local kernel ready" : "Execution error";
+      if (result.success && Array.isArray(result.plots) && result.plots.length) {
+        const plot = result.plots[result.plots.length - 1];
+        const svg = await request("/api/plot-svg", { points: plot.points, title: plot.title,
+          xLabel: plot.xLabel, yLabel: plot.yLabel });
+        openPlot(plot.title, svg.svg);
+        pushConsole(`Opened plot: ${plot.title}`);
+      }
       return result;
     } catch (error) {
       appendOutput(error.message, false);
@@ -499,6 +516,11 @@
     link.download = name;
     link.click();
     setTimeout(() => URL.revokeObjectURL(link.href), 1000);
+  }
+
+  function downloadBinary(name, base64) {
+    const bytes = Uint8Array.from(atob(base64), (char) => char.charCodeAt(0));
+    download(name, bytes, "application/octet-stream");
   }
 
   function setPanel(panelId) {
@@ -996,6 +1018,10 @@
   $("#download-transpiled").addEventListener("click", () => {
     const sourceName = currentFile?.name || "Untitled.forge";
     const baseName = sourceName.replace(/\.forge$/i, "").replace(/\.eq$/i, "");
+    if (generatedTarget === "ti-basic" && generatedBinary) {
+      downloadBinary(`${baseName}.8xp`, generatedBinary);
+      return;
+    }
     const extension = {
       cpp: "cpp",
       "ti-basic": "ti.txt",

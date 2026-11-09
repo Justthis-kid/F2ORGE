@@ -172,7 +172,7 @@ documentation; units still derive from their dimensions.
 
 | Command | Purpose |
 |---|---|
-| `forge run FILE.forge` | Run a source file. `--explain` displays solver rearrangements. |
+| `forge run FILE.forge` | Run a source file. `--explain` displays solver rearrangements; `plot` statements write graph files (`--plot-format svg\|png\|pdf\|html`). |
 | `forge shell` | Start the interactive language shell. |
 | `forge check FILE...` | Validate equation files/program equation definitions without executing ordinary statements. |
 | `forge doc EQUATION` | Generate documentation from equation metadata and declarations. |
@@ -180,4 +180,4 @@ documentation; units still derive from their dimensions.
 | `forge graph EQUATION ...` | Sweep an equation input and export a graph. `--interactive` writes standalone HTML. |
 | `forge calc EQUATION ...` | Create an offline HTML calculator; `--terminal` opens a terminal calculator. |
 | `forge plot FILE.forge Y [--x X]` | Plot vector variables created by a script. |
-| `forge transpile FILE --target TARGET` | Generate supported scalar code for Python, C++, MicroPython, or TI-84 BASIC. |
+| `forge transpile FILE --target TARGET` | Generate supported scalar code for Python, C++, MicroPython, or TI-84 BASIC. A `.8xp` output name writes a tokenized TI-84 program. |

@@ -116,6 +116,18 @@ Repeated `--curve` values compare cases while sweeping the same other input (her
 `--samples 201` for finer sampling. For vector data created by a script, use
 `forge plot first.forge direction` after assigning at least two vector values.
 
+A script can also draw its own graph. Save this as `power.forge` and run it with
+`forge run power.forge`; the graph is written next to the program as `power-plot.svg`:
+
+```text
+speed = linspace(0 m/s, 30 m/s, 61)
+power = 0.5 * 1200 kg/m^3 * 2.1 m^2 * 0.3 * speed^3
+plot(speed, power)
+```
+
+`plot(y)` uses the sample index for the horizontal axis. The desktop IDE opens each plot in its own
+window after a run, and the browser IDE shows the last plot in its interactive plot dialog.
+
 ## Lesson 7 — Build table charts
 
 Start the browser IDE with `forge browser`, open the **Charts** tab, and edit its CSV table or import

@@ -16,8 +16,8 @@ from fractions import Fraction
 from typing import Dict, Iterable, List, Tuple
 
 SUPERSCRIPTS = str.maketrans("0123456789-", "⁰¹²³⁴⁵⁶⁷⁸⁹⁻")
-BASE_SYMBOLS = ("m", "kg", "s", "A", "K", "mol", "cd")  # index order of Dim.exps
-DISPLAY_ORDER = (1, 0, 2, 3, 4, 5, 6)  # print kg before m, as in kg*m/s^2
+BASE_SYMBOLS = ("m", "kg", "s", "A", "K", "mol", "cd", "rad", "dB", "USD", "EUR", "GBP", "JPY", "CAD", "AUD")
+DISPLAY_ORDER = (1, 0, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14)  # print kg before m, as in kg*m/s^2
 DISPLAY_NAMES = {"ohm": "Ω", "degC": "°C", "degF": "°F"}
 
 
@@ -26,8 +26,10 @@ class Dim:
     exps: Tuple[Fraction, ...]
 
     @staticmethod
-    def of(L=0, M=0, T=0, I=0, Th=0, N=0, J=0) -> "Dim":
-        return Dim(tuple(Fraction(x) for x in (L, M, T, I, Th, N, J)))
+    def of(L=0, M=0, T=0, I=0, Th=0, N=0, J=0, Angle=0, Log=0,
+           USD=0, EUR=0, GBP=0, JPY=0, CAD=0, AUD=0) -> "Dim":
+        return Dim(tuple(Fraction(x) for x in
+                         (L, M, T, I, Th, N, J, Angle, Log, USD, EUR, GBP, JPY, CAD, AUD)))
 
     def __mul__(self, other: "Dim") -> "Dim":
         return Dim(tuple(a + b for a, b in zip(self.exps, other.exps)))
@@ -45,6 +47,8 @@ class Dim:
 
 
 DIMLESS = Dim.of()
+ANGLE = Dim.of(Angle=1)
+LOG_LEVEL = Dim.of(Log=1)
 
 # Named derived units: the dimension -> symbol used when a result is simplified.
 # Hz is left out on purpose: a bare 1/s is usually a rate, and "10 Hz" would surprise people.
@@ -66,6 +70,9 @@ DERIVED: Dict[Dim, str] = {
 # Human names used in error messages ("expected acceleration, found mass").
 NAMES: Dict[Dim, str] = {
     DIMLESS: "a plain number",
+    ANGLE: "angle",
+    LOG_LEVEL: "logarithmic level",
+    Dim.of(Angle=1, T=-1): "angular velocity",
     Dim.of(L=1): "length",
     Dim.of(M=1): "mass",
     Dim.of(T=1): "time",

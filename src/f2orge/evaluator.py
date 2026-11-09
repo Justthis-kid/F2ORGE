@@ -13,12 +13,12 @@ from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
 
 from . import syntax as S
 from .constants import CONSTANTS
-from .dimensions import describe_full
+from .dimensions import ANGLE, DIMLESS, describe_full
 from .errors import ForgeError, ForgeEvalError, ForgeNameError, ForgeSyntaxError, Span, UnitError
 from .linear_algebra import (
-    Matrix, Value, add as add_linear, divide as divide_linear,
-    inverse, make_matrix, make_vector, multiply as multiply_linear, negate, subtract as subtract_linear,
-    transpose,
+    Matrix, Value, Vector, add as add_linear, cross, determinant, divide as divide_linear,
+    index as index_linear, inverse, make_matrix, make_vector, multiply as multiply_linear, negate,
+    subtract as subtract_linear, transpose,
 )
 from .quantity import Quantity
 from .units import lookup_unit
@@ -63,6 +63,10 @@ ARITY = {
     "sin": (1, 1), "cos": (1, 1), "tan": (1, 1), "asin": (1, 1), "acos": (1, 1), "atan": (1, 1),
     "atan2": (2, 2), "exp": (1, 1), "ln": (1, 1), "log": (1, 1), "sqrt": (1, 1), "abs": (1, 1),
     "min": (2, 99), "max": (2, 99), "inverse": (1, 1), "transpose": (1, 1),
+    "cross": (2, 2), "det": (1, 1), "sum": (1, 1), "mean": (1, 1),
+    "std": (1, 1), "median": (1, 1), "floor": (1, 1), "ceil": (1, 1),
+    "round": (1, 2), "log2": (1, 1), "linspace": (3, 3), "range": (1, 3),
+    "db": (1, 1), "undb": (1, 1),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -125,6 +129,8 @@ class Evaluator:
                 return self._call_function(node, scope)
             eq, values = self.call_equation(node, scope)
             return values[eq.primary]
+        if isinstance(node, S.Index):
+            return index_linear(self.eval(node.obj, scope), [self.eval(item, scope) for item in node.indices])
         if isinstance(node, S.Member):
             if isinstance(node.obj, S.Call) and node.obj.func not in ARITY:
                 eq, values = self.call_equation(node.obj, scope)
@@ -154,7 +160,7 @@ class Evaluator:
         return UndefinedVariable(f"'{name}' is not defined", span, hint=" ".join(parts) or None)
 
     # ---- built-in functions ----------------------------------------------------------------
-    def _call_function(self, node: S.Call, scope: Scope) -> Quantity:
+    def _call_function(self, node: S.Call, scope: Scope):
         name = node.func
         if node.kwargs:
             raise ForgeSyntaxError(f"{name}() takes plain values, not name = value pairs", node.span)
@@ -207,12 +213,103 @@ def _apply(name: str, args: List[object]):
         if not isinstance(args[0], Matrix):
             raise ForgeEvalError("inverse() requires a matrix")
         return inverse(args[0])
-    if any(not isinstance(arg, Quantity) for arg in args):
+    if name == "det":
+        if not isinstance(args[0], Matrix):
+            raise ForgeEvalError("det() requires a matrix")
+        return determinant(args[0])
+    if name == "cross":
+        if not all(isinstance(arg, Vector) for arg in args):
+            raise ForgeEvalError("cross() requires two vectors")
+        return cross(args[0], args[1])
+    if name in ("sum", "mean", "std", "median"):
+        value = args[0]
+        if not isinstance(value, Vector):
+            raise ForgeEvalError(f"{name}() requires a vector")
+        items = value.items
+        first = items[0]
+        if any(item.dim != first.dim for item in items):
+            raise UnitError(f"{name}() requires vector elements with matching units")
+        if name == "sum":
+            total = first
+            for item in items[1:]:
+                total = total + item
+            return total
+        numbers = sorted(item.value for item in items)
+        if name == "mean":
+            return Quantity(sum(numbers) / len(numbers), first.dim, first.unit)
+        if name == "median":
+            middle = len(numbers) // 2
+            median = numbers[middle] if len(numbers) % 2 else (numbers[middle - 1] + numbers[middle]) / 2
+            return Quantity(median, first.dim, first.unit)
+        mean = sum(numbers) / len(numbers)
+        return Quantity(math.sqrt(sum((number - mean) ** 2 for number in numbers) / len(numbers)), first.dim, first.unit)
+    if name == "linspace":
+        start, stop, count = args
+        n = _plain_integer(count, "linspace() sample count")
+        if n < 1 or n > 100000:
+            raise ForgeEvalError("linspace() sample count must be between 1 and 100000")
+        if start.dim != stop.dim:
+            raise UnitError("linspace() endpoints must have matching units")
+        if n == 1:
+            return Vector((start,))
+        return Vector(tuple(Quantity(start.value + i * (stop.value - start.value) / (n - 1), start.dim,
+                                    start.unit) for i in range(n)))
+    if name == "range":
+        if len(args) == 1:
+            start, stop, step = Quantity(0), args[0], Quantity(1)
+        elif len(args) == 2:
+            start, stop, step = args[0], args[1], Quantity(1)
+        else:
+            start, stop, step = args
+        if start.is_plain and stop.dim != DIMLESS:
+            start = Quantity(start.value, stop.dim, stop.unit)
+        if start.dim != stop.dim:
+            raise UnitError("range() start and stop must have compatible units")
+        if step.is_plain and start.dim != DIMLESS:
+            step = Quantity(step.value, start.dim, start.unit)
+        if step.dim != start.dim:
+            raise UnitError("range() step must have compatible units")
+        if step.value == 0:
+            raise ForgeEvalError("range() step cannot be zero")
+        values = []
+        current = start.value
+        predicate = (lambda x: x < stop.value) if step.value > 0 else (lambda x: x > stop.value)
+        while predicate(current):
+            if len(values) >= 100000:
+                raise ForgeEvalError("range() is limited to 100000 values")
+            values.append(Quantity(current, start.dim, start.unit))
+            current += step.value
+        return Vector(tuple(values))
+    if name == "db":
+        q = args[0]
+        if q.value <= 0 or not q.dim.is_dimensionless:
+            raise UnitError("db() requires a positive dimensionless ratio")
+        return Quantity(10 * math.log10(q.value), lookup_unit("dB").dim, lookup_unit("dB"))
+    if name == "undb":
+        q = args[0]
+        if q.dim != lookup_unit("dB").dim:
+            raise UnitError("undb() requires a dB value")
+        return Quantity(10 ** (q.value / 10))
+    if name in ("floor", "ceil", "round"):
+        q = args[0]
+        if not q.dim.is_dimensionless:
+            raise UnitError(f"{name}() requires a dimensionless value")
+        digits = _plain_integer(args[1], "round() digits") if len(args) == 2 else 0
+        value = math.floor(q.value) if name == "floor" else math.ceil(q.value) if name == "ceil" else round(q.value, digits)
+        return Quantity(value)
+    if name == "log2":
+        x = _dimless(args[0], name)
+        if x <= 0:
+            raise ForgeEvalError("log2() needs a positive number")
+        return Quantity(math.log2(x))
+    if not all(isinstance(arg, Quantity) for arg in args):
         raise ForgeEvalError(f"{name}() requires scalar quantities")
     try:
         if name in ("sin", "cos", "tan"):
-            x = _dimless(args[0], name, "an angle (rad or deg) or a plain number")
-            return Quantity({"sin": math.sin, "cos": math.cos, "tan": math.tan}[name](x))
+            q = args[0]
+            if q.dim not in (DIMLESS, ANGLE):
+                raise UnitError(f"{name}() needs an angle or a plain number, found {describe_full(q.dim)}")
+            return Quantity({"sin": math.sin, "cos": math.cos, "tan": math.tan}[name](q.value))
         if name in ("asin", "acos"):
             x = _dimless(args[0], name)
             if not -1.0 <= x <= 1.0:
@@ -253,3 +350,9 @@ def _apply(name: str, args: List[object]):
     except OverflowError:
         raise ForgeEvalError(f"{name}() result is too large to represent") from None
     raise AssertionError(name)  # pragma: no cover
+
+
+def _plain_integer(value, label):
+    if not isinstance(value, Quantity) or not value.is_plain or not value.value.is_integer():
+        raise ForgeEvalError(f"{label} must be a plain whole number")
+    return int(value.value)

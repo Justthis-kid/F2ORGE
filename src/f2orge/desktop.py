@@ -4,11 +4,12 @@ from __future__ import annotations
 import re
 import json
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple
 
 from .errors import ForgeError
 from .interpreter import Interpreter
 from .linear_algebra import Vector
+from .units import Unit
 from .visual_graph import NODE_INPUTS, NODE_SYMBOLS, VisualGraph
 
 
@@ -30,7 +31,12 @@ class DesktopSession:
     """Persistent interpreter state shared by editor scripts and command-window input."""
 
     def __init__(self, base_dir: Optional[Path] = None):
-        self.interpreter = Interpreter(base_dir=base_dir or Path.cwd())
+        self.interpreter = Interpreter(base_dir=base_dir or Path.cwd(), plotter=self._record_plot)
+        self.plots: List[Dict[str, object]] = []
+
+    def _record_plot(self, title: str, x_label: str, y_label: str,
+                     points: List[Tuple[float, float]]) -> None:
+        self.plots.append({"title": title, "xLabel": x_label, "yLabel": y_label, "points": points})
 
     def execute(self, text: str, path: Optional[Path] = None) -> Tuple[str, bool]:
         output: List[str] = []
@@ -48,7 +54,8 @@ class DesktopSession:
         return "\n".join(output), True
 
     def clear(self) -> None:
-        self.interpreter = Interpreter(base_dir=self.interpreter.base_dir)
+        self.interpreter = Interpreter(base_dir=self.interpreter.base_dir, plotter=self._record_plot)
+        self.plots.clear()
 
     def plot_data(self, command: str) -> Tuple[str, str, List[Tuple[float, float]]]:
         """Parse `plot y`, `plot x, y`, or `plot(x, y)` using vector workspace values."""
@@ -69,31 +76,41 @@ class DesktopSession:
         else:
             x_name, y_name = None, match.group(3)
         variables = self.interpreter.variables
-        if y_name not in variables or not isinstance(variables[y_name], Vector):
+        y_value = variables.get(y_name)
+        if not isinstance(y_value, Vector):
             raise ForgeError(f"'{y_name}' is not a vector in the workspace", title="Cannot plot")
-        y_values = variables[y_name].items
-        if x_name is None:
-            x_values = list(range(1, len(y_values) + 1))
-            x_label = "Index"
-        else:
-            if x_name not in variables or not isinstance(variables[x_name], Vector):
+        x_value = None
+        if x_name is not None:
+            x_value = variables.get(x_name)
+            if not isinstance(x_value, Vector):
                 raise ForgeError(f"'{x_name}' is not a vector in the workspace", title="Cannot plot")
-            x_quantities = variables[x_name].items
-            if len(x_quantities) != len(y_values):
-                raise ForgeError("x and y vectors must have the same length", title="Cannot plot")
-            x_unit = x_quantities[0].unit
-            if any(value.dim != x_quantities[0].dim for value in x_quantities):
-                raise ForgeError("all x values must have matching units", title="Cannot plot")
-            x_values = [value.magnitude(x_unit) if x_unit else value.value for value in x_quantities]
-            x_label = f"{x_name} ({x_unit.symbol()})" if x_unit else x_name
-        if len(y_values) < 2:
-            raise ForgeError("a plot needs at least two points", title="Cannot plot")
-        y_unit = y_values[0].unit
-        if any(value.dim != y_values[0].dim for value in y_values):
-            raise ForgeError("all y values must have matching units", title="Cannot plot")
-        y_data = [value.magnitude(y_unit) if y_unit else value.value for value in y_values]
-        y_label = f"{y_name} ({y_unit.symbol()})" if y_unit else y_name
-        return x_label, y_label, list(zip(x_values, y_data))
+        return plot_series(x_name, x_value, y_name, y_value)
+
+
+def plot_series(x_name: Optional[str], x_value: Optional[Vector],
+                y_name: str, y_value: Vector) -> Tuple[str, str, List[Tuple[float, float]]]:
+    """Turn workspace vectors into (x label, y label, points) for a graph."""
+    y_values = y_value.items
+    if x_value is None:
+        x_values: List[float] = list(range(1, len(y_values) + 1))
+        x_label = "Index"
+    else:
+        x_quantities = x_value.items
+        if len(x_quantities) != len(y_values):
+            raise ForgeError("x and y vectors must have the same length", title="Cannot plot")
+        x_unit = x_quantities[0].unit
+        if any(value.dim != x_quantities[0].dim for value in x_quantities):
+            raise ForgeError("all x values must have matching units", title="Cannot plot")
+        x_values = [value.magnitude(x_unit) if x_unit else value.value for value in x_quantities]
+        x_label = f"{x_name} ({x_unit.symbol()})" if x_unit else str(x_name)
+    if len(y_values) < 2:
+        raise ForgeError("a plot needs at least two points", title="Cannot plot")
+    if any(value.dim != y_values[0].dim for value in y_values):
+        raise ForgeError("all y values must have matching units", title="Cannot plot")
+    y_unit = y_values[0].unit or Unit.from_dim(y_values[0].dim)
+    y_data = [value.magnitude(y_unit) for value in y_values]
+    y_label = f"{y_name} ({y_unit.symbol()})" if y_unit.symbol() else y_name
+    return x_label, y_label, list(zip(x_values, y_data))
 
 
 def launch_desktop_ide() -> None:
@@ -224,15 +241,23 @@ def launch_desktop_ide() -> None:
         console.configure(state="disabled")
 
     def run_program() -> None:
+        session.plots.clear()
         result, success = session.execute(editor.get("1.0", "end-1c"), current_path)
         show_output(result)
         refresh_workspace()
+        for plot in session.plots:
+            draw_plot_data(str(plot["title"]), str(plot["xLabel"]), str(plot["yLabel"]),
+                           plot["points"])
         set_status("Run completed" if success else "Run failed — see output")
 
     def draw_plot(command: str) -> None:
         x_label, y_label, points = session.plot_data(command)
+        draw_plot_data(f"Plot: {y_label} vs {x_label}", x_label, y_label, points)
+
+    def draw_plot_data(title: str, x_label: str, y_label: str,
+                       points: List[Tuple[float, float]]) -> None:
         window = tk.Toplevel(root)
-        window.title(f"Plot: {y_label} vs {x_label}")
+        window.title(title)
         window.geometry("760x500")
         canvas = tk.Canvas(window, background="white", highlightthickness=0)
         canvas.pack(fill="both", expand=True)
@@ -735,8 +760,9 @@ def launch_desktop_ide() -> None:
             set_status("Workspace cleared")
             return
         if command == ":help":
-            append_console("Enter F²ORGE expressions or assignments. Use plot(y) or plot(x, y) "
-                           "with workspace vectors; :clear resets variables; Up/Down recalls commands.")
+            append_console("Enter F²ORGE expressions or assignments. plot(y) and plot(x, y) draw "
+                           "workspace vectors, and a plot statement in a script opens its graph "
+                           "after the run; :clear resets variables; Up/Down recalls commands.")
             return
         if re.match(r"^\s*plot(?:\s|\()", command):
             try:
@@ -747,9 +773,13 @@ def launch_desktop_ide() -> None:
                 append_console(err.format())
                 set_status("Plot failed")
             return
+        session.plots.clear()
         result, success = session.execute(command, current_path)
         if result:
             append_console(result)
+        for plot in session.plots:
+            draw_plot_data(str(plot["title"]), str(plot["xLabel"]), str(plot["yLabel"]),
+                           plot["points"])
         refresh_workspace()
         set_status("Command completed" if success else "Command failed")
 

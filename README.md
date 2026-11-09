@@ -91,6 +91,7 @@ forge browser
 forge transpile examples/force.forge --target python -o force.py
 forge transpile examples/force.forge --target cpp -o force.cpp
 forge transpile examples/force.forge --target micropython -o force-mpy.py
+forge transpile examples/force.forge --target ti-basic -o force.8xp
 forge transpile examples/force.forge --target ti-basic -o force.ti.txt
 forge --help
 ```
@@ -122,9 +123,17 @@ rejected with a source-located explanation rather than silently altered. MicroPy
 only `math` and built-ins, including a portable base-10 logarithm expression, and targets the
 standard MicroPython language subset. TI-84 BASIC output is readable source for the TI-84/Plus/Plus CE
 calculator BASIC language; it maps F²ORGE names to the calculator's 27 scalar variables and adds a
-non-running variable map. The `.ti.txt` file is source text, not a tokenized `.8xp` calculator
-program; use a TI-compatible editor/transfer tool to enter or tokenize it. `atan2` and more than 27
-distinct scalar variables are not supported by the TI-BASIC target.
+non-running variable map. Write the output to a `.8xp` name to get a tokenized calculator program
+instead of text:
+
+```text
+forge transpile program.forge --target ti-basic -o program.8xp
+```
+
+The `.8xp` file carries the TI variable header, the tokenized program and its checksum, so TI Connect
+(or another link tool) can send it straight to a TI-83/84 Plus or Plus CE. The browser IDE's
+**Download** button does the same for TI-84 BASIC. `atan2` and more than 27 distinct scalar variables
+are not supported by the TI-BASIC target.
 
 ### Build a standalone Windows app
 
@@ -272,6 +281,21 @@ desktop window. For MATLAB-style plotting of vectors produced by a script, use
 interactive plot instead of opening a window. Native windows need the desktop extra and a supported
 system WebView.
 
+Programs can also draw their own graphs with a `plot` statement, which works in `forge run`, the
+shell, the desktop IDE, and the browser IDE:
+
+```text
+speed = linspace(0 m/s, 30 m/s, 61)
+power = 0.5 * 1200 kg/m^3 * 2.1 m^2 * 0.3 * speed^3
+plot(speed, power)
+```
+
+`plot(y)` uses the sample index for the horizontal axis; `plot(x, y)` needs two vectors of the same
+length with matching units. `forge run` writes one graph per plot statement next to the program
+(`program-plot.svg`, or `-plot-2`, ... for more), and `--plot-format png|pdf|html` chooses the
+format. The desktop IDE opens each plot in its own window after the run, and the browser IDE opens
+the last plot in the interactive plot dialog.
+
 ### 7. Generate an offline calculator
 
 Turn a callable equation into a self-contained HTML app:
@@ -304,7 +328,7 @@ The same F²ORGE commands are available in the VS Code terminal on Windows, macO
 ### Quick command reference
 
 ```text
-forge run FILE.forge [--explain]     Run a program
+forge run FILE.forge [--explain]     Run a program; plot statements write graph files
 forge shell                          Start the interactive shell
 forge ide                            Launch the offline desktop editor
 forge check FILE...                  Parse and unit-check equation files
@@ -313,6 +337,7 @@ forge calc EQUATION [-o FILE.html]   Export an offline calculator; --desktop ope
 forge graph EQUATION ...             Export SVG, PNG, or PDF; --window opens an interactive plot
 forge plot FILE.forge Y [--x X]      Plot script vectors interactively or export HTML
 forge transpile FILE --target TARGET  Generate Python, C++, MicroPython, or TI-84 BASIC
+                                      (-o program.8xp writes a tokenized TI-84 program)
 forge units [FILTER]                 List built-in units
 forge --version                      Print the installed version
 ```

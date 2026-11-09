@@ -1,7 +1,9 @@
 """Loopback-only browser IDE backed by the local F²ORGE interpreter."""
 from __future__ import annotations
 
+import base64
 import json
+import math
 import secrets
 import threading
 import webbrowser
@@ -140,7 +142,8 @@ def _handler(session: DesktopSession):
                 self._json(200, {"success": True, **state})
                 return
             if self.path not in (
-                "/api/execute", "/api/transpile", "/api/plot", "/api/chart", "/api/worksheet",
+                "/api/execute", "/api/transpile", "/api/plot", "/api/plot-svg", "/api/chart",
+                "/api/worksheet",
             ):
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
                 return
@@ -171,6 +174,22 @@ def _handler(session: DesktopSession):
                     worksheet_values = data.get("inputs", {})
                     if not isinstance(worksheet_name, str) or not isinstance(worksheet_values, dict):
                         self._json(400, {"success": False, "output": "Expected a worksheet name and inputs object"})
+                        return
+                elif self.path == "/api/plot-svg":
+                    if not isinstance(data, dict):
+                        self._json(400, {"success": False, "output": "Expected a plot object"})
+                        return
+                    plot_points = data.get("points")
+                    if not isinstance(plot_points, list) or not 2 <= len(plot_points) <= 100000:
+                        self._json(400, {"success": False, "output": "Expected a list of plot points"})
+                        return
+                    try:
+                        points = [(float(x), float(y)) for x, y in plot_points]
+                    except (TypeError, ValueError, OverflowError):
+                        self._json(400, {"success": False, "output": "Plot points must be number pairs"})
+                        return
+                    if not all(math.isfinite(value) for point in points for value in point):
+                        self._json(400, {"success": False, "output": "Plot points must be finite"})
                         return
                 else:
                     field = "command" if self.path == "/api/plot" else "source"
@@ -248,10 +267,24 @@ def _handler(session: DesktopSession):
 
                 try:
                     generated = transpile(source, target, "<IDE editor>")
+                    binary = ""
+                    if target == "ti-basic":
+                        from .ti84 import build_8xp
+
+                        binary = base64.b64encode(build_8xp(generated, "F2ORGE")).decode("ascii")
                 except ForgeError as err:
                     self._json(400, {"success": False, "output": err.format()})
                     return
-                self._json(200, {"success": True, "output": generated, "target": target})
+                self._json(200, {"success": True, "output": generated, "target": target,
+                                 "binary": binary})
+                return
+            if self.path == "/api/plot-svg":
+                from .plot import render_svg
+
+                title = str(data.get("title") or "Plot")
+                x_label = str(data.get("xLabel") or "x")
+                y_label = str(data.get("yLabel") or "y")
+                self._json(200, {"success": True, "svg": render_svg(title, x_label, y_label, [("", points)])})
                 return
             if self.path == "/api/plot":
                 from .plot import render_svg
@@ -273,9 +306,11 @@ def _handler(session: DesktopSession):
                 })
                 return
             with session_lock:
+                session.plots.clear()
                 output, success = session.execute(source)
                 state = _workspace(session)
-            self._json(200, {"success": success, "output": output, **state})
+                plots = list(session.plots)
+            self._json(200, {"success": success, "output": output, "plots": plots, **state})
 
         def log_message(self, _format: str, *_args) -> None:
             return

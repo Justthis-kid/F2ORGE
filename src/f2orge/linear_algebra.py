@@ -4,6 +4,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Sequence, Tuple, Union
 
+from .dimensions import Dim
 from .errors import ForgeEvalError, UnitError
 from .quantity import Quantity
 
@@ -163,13 +164,33 @@ def transpose(matrix: Matrix) -> Matrix:
     return Matrix(tuple(tuple(matrix.rows[i][j] for i in range(rows)) for j in range(columns)))
 
 
+def _matrix_dimensions(matrix: Matrix) -> Tuple[list, list]:
+    """Factor a matrix's units into one dimension per row and one per column."""
+    rows, columns = matrix.shape
+    row_dims = [matrix.rows[i][0].dim for i in range(rows)]
+    column_dims = [matrix.rows[0][j].dim / row_dims[0] for j in range(columns)]
+    for i in range(rows):
+        for j in range(columns):
+            if matrix.rows[i][j].dim != row_dims[i] * column_dims[j]:
+                raise UnitError(
+                    "matrix units must factor consistently into row and column dimensions",
+                    hint="Use one consistent unit per row and column before inverting or taking a determinant.",
+                )
+    return row_dims, column_dims
+
+
+def _product_dims(row_dims: Sequence[Dim], column_dims: Sequence[Dim]) -> Dim:
+    result = Dim.of()
+    for dim in list(row_dims) + list(column_dims):
+        result = result * dim
+    return result
+
+
 def inverse(matrix: Matrix) -> Matrix:
     rows, columns = matrix.shape
     if rows != columns:
         raise ForgeEvalError(f"inverse() requires a square matrix, found {rows}x{columns}")
-    if any(not item.dim.is_dimensionless for row in matrix.rows for item in row):
-        raise UnitError("inverse() currently requires a dimensionless matrix",
-                        hint="Scale the matrix to dimensionless ratios before inverting it.")
+    row_dims, column_dims = _matrix_dimensions(matrix)
 
     work = [[item.value for item in row] +
             [1.0 if i == j else 0.0 for j in range(rows)]
@@ -187,4 +208,64 @@ def inverse(matrix: Matrix) -> Matrix:
             factor = work[row][column]
             work[row] = [value - factor * pivot_value
                          for value, pivot_value in zip(work[row], work[column])]
-    return Matrix(tuple(tuple(Quantity(value) for value in row[rows:]) for row in work))
+    return Matrix(tuple(
+        tuple(Quantity(work[i][rows + j], (column_dims[i] * row_dims[j]) ** -1)
+              for j in range(rows))
+        for i in range(rows)
+    ))
+
+
+def determinant(matrix: Matrix) -> Quantity:
+    rows, columns = matrix.shape
+    if rows != columns:
+        raise ForgeEvalError(f"det() requires a square matrix, found {rows}x{columns}")
+    row_dims, column_dims = _matrix_dimensions(matrix)
+    work = [[item.value for item in row] for row in matrix.rows]
+    result = 1.0
+    for column in range(rows):
+        pivot = max(range(column, rows), key=lambda row: abs(work[row][column]))
+        if work[pivot][column] == 0:
+            return Quantity(0, _product_dims(row_dims, column_dims))
+        if pivot != column:
+            work[column], work[pivot] = work[pivot], work[column]
+            result *= -1
+        value = work[column][column]
+        result *= value
+        for row in range(column + 1, rows):
+            factor = work[row][column] / value
+            for j in range(column + 1, rows):
+                work[row][j] -= factor * work[column][j]
+    return Quantity(result, _product_dims(row_dims, column_dims))
+
+
+def cross(left: Vector, right: Vector) -> Vector:
+    if len(left.items) != 3 or len(right.items) != 3:
+        raise ForgeEvalError("cross() requires two vectors of length 3")
+    a, b = left.items, right.items
+    return Vector((a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2],
+                   a[0] * b[1] - a[1] * b[0]))
+
+
+def index(value: Value, indices: Sequence[Value]) -> Value:
+    """Zero-based indexing: v[i] for a vector, m[i] for a row, m[i, j] for one element."""
+    if len(indices) not in (1, 2) or any(
+        not isinstance(item, Quantity) or not item.is_plain or not item.value.is_integer()
+        for item in indices
+    ):
+        raise ForgeEvalError("indices must be plain whole numbers (zero-based)")
+    positions = [int(item.value) for item in indices]
+    if any(position < 0 for position in positions):
+        raise ForgeEvalError("indices must be non-negative")
+    if isinstance(value, Vector) and len(positions) == 1:
+        if positions[0] >= len(value.items):
+            raise ForgeEvalError("vector index is out of range")
+        return value.items[positions[0]]
+    if isinstance(value, Matrix) and len(positions) == 1:
+        if positions[0] >= value.shape[0]:
+            raise ForgeEvalError("matrix row index is out of range")
+        return Vector(value.rows[positions[0]])
+    if isinstance(value, Matrix) and len(positions) == 2:
+        if positions[0] >= value.shape[0] or positions[1] >= value.shape[1]:
+            raise ForgeEvalError("matrix index is out of range")
+        return value.rows[positions[0]][positions[1]]
+    raise ForgeEvalError("indexing expects a vector with one index or a matrix with one or two indices")

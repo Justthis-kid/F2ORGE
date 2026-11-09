@@ -11,7 +11,7 @@ from . import syntax as S
 from .equation import Equation
 from .errors import ForgeError, ForgeImportError, ForgeNameError, Source, UnitError
 from .evaluator import Evaluator, Scope
-from .linear_algebra import Value
+from .linear_algebra import Value, Vector
 from .parser import parse
 from .printer import format_equation
 from .quantity import Quantity
@@ -33,11 +33,14 @@ class Interpreter:
     """Holds the variables and equations of one session and runs programs against them."""
 
     def __init__(self, base_dir=None, out: Optional[Callable[[str], None]] = None, *,
-                 explain: bool = False, echo: bool = False):
+                 explain: bool = False, echo: bool = False,
+                 plotter: Optional[Callable[[str, str, str, List[Tuple[float, float]]], None]] = None):
         self.base_dir = Path(base_dir).resolve() if base_dir else Path.cwd()
         self.out = out or print
         self.explain = explain  # show the rearranged formula for every solve
         self.echo = echo        # print assignments too (the shell does)
+        self.plotter = plotter  # receives (title, x label, y label, points) for plot statements
+        self.plots: List[Dict[str, object]] = []  # every plot drawn in this session
         self.variables: Dict[str, Value] = {}
         self.equations: Dict[str, Equation] = {}
         self.worksheets: Dict[str, S.WorksheetDef] = {}
@@ -81,6 +84,8 @@ class Interpreter:
                 parts.append(item.value if isinstance(item, S.StringLit)
                              else str(self.evaluator.eval(item, self.scope())))
             self.out(" ".join(parts))
+        elif isinstance(st, S.Plot):
+            self._plot(st)
         elif isinstance(st, S.Convert):
             value = self.evaluator.eval(st.expr, self.scope())
             if not isinstance(value, Quantity):
@@ -103,6 +108,29 @@ class Interpreter:
             self._export(st)
         else:  # pragma: no cover
             raise TypeError(st)
+
+    def _plot(self, st: S.Plot) -> None:
+        from .desktop import plot_series
+
+        y_value = self.evaluator.eval(st.y, self.scope())
+        if not isinstance(y_value, Vector):
+            raise ForgeError("plot() needs a vector of values", st.span, title="Cannot plot",
+                             hint="Build one with linspace(), range(), or a vector literal like <1, 2, 3>.")
+        x_name = x_value = None
+        if st.x is not None:
+            x_value = self.evaluator.eval(st.x, self.scope())
+            if not isinstance(x_value, Vector):
+                raise ForgeError("the horizontal values of plot() must be a vector", st.span,
+                                 title="Cannot plot")
+            x_name = st.x.name if isinstance(st.x, S.Name) else "x"
+        y_name = st.y.name if isinstance(st.y, S.Name) else "y"
+        x_label, y_label, points = plot_series(x_name, x_value, y_name, y_value)
+        title = f"{y_label} vs {x_label}"
+        self.plots.append({"title": title, "xLabel": x_label, "yLabel": y_label, "points": points})
+        if self.plotter is not None:
+            self.plotter(title, x_label, y_label, points)
+        else:
+            self.out(f"Plot: {title} ({len(points)} points)")
 
     def _define_worksheet(self, definition: S.WorksheetDef) -> None:
         inputs = [item for item in definition.items if isinstance(item, S.WorksheetInput)]

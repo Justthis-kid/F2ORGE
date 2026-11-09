@@ -256,7 +256,7 @@ function add(a,b,subtract=false){
 function evaluate(node,scope,depth=0){
   if(depth>32) throw Error("Equation calls are nested too deeply.");
   switch(node.kind){
-    case "number": return q(node.value,[0,0,0,0,0,0,0]);
+    case "number": return q(node.value,[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0]);
     case "quantity": return q(node.value*node.unit.scale+node.unit.offset,node.unit.dim,!!node.unit.offset);
     case "name":
       if(Object.hasOwn(scope,node.name)) return scope[node.name];
@@ -273,7 +273,7 @@ function evaluate(node,scope,depth=0){
       if(node.op==="-") return add(a,b,true);
       if(node.op==="*") return q(a.value*b.value,addDim(a.dim,b.dim));
       if(node.op==="/"){if(b.value===0)throw Error("Division by zero.");return q(a.value/b.value,addDim(a.dim,b.dim,-1));}
-      if(!sameDim(b.dim,[0,0,0,0,0,0,0])) throw Error("An exponent must be dimensionless.");
+      if(!sameDim(b.dim,[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0])) throw Error("An exponent must be dimensionless.");
       const value=Math.pow(a.value,b.value);
       if(!Number.isFinite(value)) throw Error("The power result is not finite.");
       return q(value,a.dim.map(x=>x*b.value));
@@ -305,7 +305,7 @@ function callEquationExpression(node,scope,depth){
   return callEquation(nested,args,depth+1);
 }
 function callFunction(name,args){
-  const a=args[0],plain=[0,0,0,0,0,0,0];
+  const a=args[0],plain=[0,0,0,0,0,0,0,0,0,0,0,0,0,0,0];
   const [minimum,maximum]=DATA.arities[name];
   if(args.length<minimum||args.length>maximum)throw Error(name+"() received the wrong number of values.");
   if(name==="min"||name==="max"){

@@ -66,6 +66,13 @@ class Member:
 
 
 @dataclass(frozen=True)
+class Index:
+    obj: object
+    indices: Tuple[object, ...]
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
 class VectorLiteral:
     items: Tuple[object, ...]
     span: Optional[Span] = None
@@ -94,6 +101,9 @@ def children(node) -> Iterator[object]:
             yield expr
     elif isinstance(node, Member):
         yield node.obj
+    elif isinstance(node, Index):
+        yield node.obj
+        yield from node.indices
 
 
 def walk(node) -> Iterator[object]:
@@ -162,6 +172,15 @@ class Print:
 class Convert:
     expr: object
     unit: Unit
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class Plot:
+    """plot(y) or plot(x, y): draw workspace vectors in a graph window."""
+
+    y: object
+    x: Optional[object] = None
     span: Optional[Span] = None
 
 

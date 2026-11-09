@@ -126,6 +126,8 @@ class Parser:
                 return self.convert_stmt()
             if kw == "print":
                 return self.print_stmt()
+            if kw == "plot":
+                return self.plot_stmt()
             if kw == "for":
                 self.fail("'for' can only be used inside a solve statement", t,
                           "Write: solve Equation for variable { ... }")
@@ -174,6 +176,21 @@ class Parser:
                 continue
             break
         return S.Print(tuple(items), self.span_from(kw.start))
+
+    def plot_stmt(self):
+        kw = self.next()
+        self.expect_op("(", "Expected '(' after 'plot'", "Write: plot(y) or plot(x, y)")
+        self.depth += 1
+        first = self.expression()
+        second = None
+        if self.is_op(","):
+            self.next()
+            second = self.expression()
+        self.expect_op(")", "Expected ')' to close this plot")
+        self.depth -= 1
+        if second is None:
+            return S.Plot(first, None, self.span_from(kw.start))
+        return S.Plot(second, first, self.span_from(kw.start))
 
     def convert_stmt(self):
         kw = self.next()
@@ -493,6 +510,14 @@ class Parser:
                 self.next()
                 node = S.Binary("^", node, S.Number(float(t.value), Span(self.source, t.start, t.end)),
                                 Span(self.source, node.span.start, t.end))
+            elif t.kind == "op" and t.text == "[":
+                self.next()
+                indices = [self.expression()]
+                while self.is_op(","):
+                    self.next()
+                    indices.append(self.expression())
+                end = self.expect_op("]")
+                node = S.Index(node, tuple(indices), Span(self.source, node.span.start, end.end))
             else:
                 return node
 
