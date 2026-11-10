@@ -15,13 +15,16 @@ from .errors import ForgeSyntaxError, Source, Span
 SUPER_CHARS = "⁰¹²³⁴⁵⁶⁷⁸⁹⁻"
 _SUPER_TO_ASCII = str.maketrans("⁰¹²³⁴⁵⁶⁷⁸⁹⁻", "0123456789-")
 _UNICODE_OPS = {"×": "*", "·": "*", "÷": "/", "−": "-", "→": "->"}
-_OPS = set("+-*/^=(),.:;{}[]<>")
+_OPS = set("+-*/^=(),.:;{}[]<>!")  # ! only starts != ; anything else after it is an error
 _NUMBER = re.compile(r"(?:[0-9][0-9_]*(?:\.[0-9]+)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _WORD_EXTRA = "_µΩ°"
 
 KEYWORDS = {
     "eq", "import", "export", "solve", "convert", "print", "for", "plot",
     "worksheet", "input", "output", "graph", "over", "from", "to",
+    "if", "elseif", "else", "while", "def", "return", "break", "continue",
+    # 'in', 'and', 'or', 'not', 'true', 'false', and 'i' are ordinary words: they are only
+    # keywords where a grammar position makes them so (for k in ..., 2 in v, a and b).
 }
 
 
@@ -70,6 +73,9 @@ def tokenize(source: Source) -> List[Token]:
             m = _NUMBER.match(text, i)
             toks.append(Token("num", m.group(), i, m.end(), float(m.group().replace("_", ""))))
             i = m.end()
+            if text[i : i + 2] == ".." and text[i + 2 : i + 3] != ".":  # 1..10 makes a range
+                toks.append(Token("op", "..", i, i + 2))
+                i += 2
         elif _is_word_start(ch):
             j = i + 1
             while j < n and _is_word_char(text[j]):
@@ -110,6 +116,13 @@ def tokenize(source: Source) -> List[Token]:
                 j += 1
             toks.append(Token("super", text[i:j], i, j, int(text[i:j].translate(_SUPER_TO_ASCII))))
             i = j
+
+        elif ch in "!<>=." and text[i + 1 : i + 2] == "=" and (ch != "." or text[i + 2 : i + 3] != "="):
+            pair = ch + "="  # != <= >= == (the last so code can also be written with ==)
+            toks.append(Token("op", pair, i, i + 2))
+            i += 2
+        elif ch == "!" and text[i + 1 : i + 2] != "=":
+            fail("Unexpected '!'", i, i + 1, "Write != for 'is not equal to'.")
         elif ch == "-" and text[i + 1 : i + 2] == ">":
             toks.append(Token("op", "->", i, i + 2))
             i += 2

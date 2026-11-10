@@ -3,25 +3,35 @@
 Every operation goes through Quantity, so `10 kg + 5 m` fails with a UnitError no matter how
 deeply it is nested.  Errors raised without a location are given the span of the expression
 node being evaluated, which is how the caret ends up under the right piece of source.
+
+Expressions can also yield text, vectors (of numbers, text, or rows), matrices, functions
+(`def f(x)` used as a value), and booleans (from comparisons, `and`, `or`, `not`).
 """
 from __future__ import annotations
 
+import cmath
 import difflib
 import math
 from fractions import Fraction
-from typing import Callable, Dict, Iterable, List, Mapping, Optional, Tuple
+from typing import Callable, Dict, Iterable, List, Optional, Tuple, Union
 
 from . import syntax as S
-from .constants import CONSTANTS
+from .constants import BOOLEANS, CONSTANTS
 from .dimensions import ANGLE, DIMLESS, describe_full
 from .errors import ForgeError, ForgeEvalError, ForgeNameError, ForgeSyntaxError, Span, UnitError
 from .linear_algebra import (
-    Matrix, Value, Vector, add as add_linear, cross, determinant, divide as divide_linear,
-    index as index_linear, inverse, make_matrix, make_vector, multiply as multiply_linear, negate,
-    subtract as subtract_linear, transpose,
+    Element, Matrix, Value, Vector, add as add_linear, ascending_all, cross, cumsum, descending_all,
+    determinant, divide as divide_linear, diff, elementwise, index as index_linear, inverse,
+    linear_regression, make_matrix, make_range, make_vector, mean, median, multiply as multiply_linear,
+    negate, normalize, numeric_items, percentile, select, solve_linear, standard_deviation, subtract as subtract_linear,
+    transpose, variance,
 )
+from .mathlib import adaptive_simpson, bisect, golden
 from .quantity import Quantity
+from .text import Text, as_text
 from .units import lookup_unit
+
+Scalar = Union[Quantity, Text]
 
 
 class UndefinedVariable(ForgeNameError):
@@ -58,15 +68,66 @@ class Scope:
         return names
 
 
+class FunctionReference:
+    """A function used as a value: `integrate(f, 0, 1)` passes `f` itself."""
+
+    __slots__ = ("name", "call")
+
+    def __init__(self, name: str, call: Callable[[Value], Value]):
+        self.name = name
+        self.call = call
+
+    def __str__(self) -> str:
+        return f"function {self.name}"
+
+    def __repr__(self) -> str:
+        return f"FunctionReference({self.name})"
+
+
+class PartialFunction:
+    """`integrate(x^2, 0, 1)`: an expression of x that behaves like a function of one value."""
+
+    __slots__ = ("expression", "variable", "evaluator", "scope", "name")
+
+    def __init__(self, expression, evaluator: "Evaluator", scope: Scope, name: str = "f"):
+        self.expression = expression
+        self.evaluator = evaluator
+        self.scope = scope
+        self.variable = "x"
+        self.name = name
+
+    def call(self, value: Value) -> Value:
+        values = dict(self.scope.values)
+        values[self.variable] = value
+        return self.evaluator.eval(self.expression, Scope(values, self.scope.excluded, self.scope.constants))
+
+    def with_variable(self, name: str) -> "PartialFunction":
+        clone = PartialFunction(self.expression, self.evaluator, self.scope, self.name)
+        clone.variable = name
+        return clone
+
+    def __str__(self) -> str:
+        return f"function {self.name}"
+
+
 # name -> (min args, max args)
 ARITY = {
     "sin": (1, 1), "cos": (1, 1), "tan": (1, 1), "asin": (1, 1), "acos": (1, 1), "atan": (1, 1),
-    "atan2": (2, 2), "exp": (1, 1), "ln": (1, 1), "log": (1, 1), "sqrt": (1, 1), "abs": (1, 1),
-    "min": (2, 99), "max": (2, 99), "inverse": (1, 1), "transpose": (1, 1),
-    "cross": (2, 2), "det": (1, 1), "sum": (1, 1), "mean": (1, 1),
-    "std": (1, 1), "median": (1, 1), "floor": (1, 1), "ceil": (1, 1),
-    "round": (1, 2), "log2": (1, 1), "linspace": (3, 3), "range": (1, 3),
-    "db": (1, 1), "undb": (1, 1),
+    "atan2": (2, 2), "sinh": (1, 1), "cosh": (1, 1), "tanh": (1, 1),
+    "exp": (1, 1), "ln": (1, 1), "log": (1, 2), "log2": (1, 1), "sqrt": (1, 1), "cbrt": (1, 1),
+    "abs": (1, 1), "min": (2, 99), "max": (2, 99), "clamp": (3, 3),
+    "inverse": (1, 1), "transpose": (1, 1), "cross": (2, 2), "det": (1, 1), "solve_system": (2, 2),
+    "sum": (1, 1), "mean": (1, 1), "std": (1, 1), "pstd": (1, 1), "var": (1, 1), "pvar": (1, 1),
+    "median": (1, 1), "percentile": (2, 2), "linreg": (2, 2), "count": (1, 1),
+    "cumsum": (1, 1), "normalize": (1, 1), "diff": (1, 1),
+    "floor": (1, 1), "ceil": (1, 1), "round": (1, 2), "sign": (1, 1),
+    "linspace": (3, 3), "logspace": (2, 3), "range": (1, 3), "sort": (1, 2), "select": (2, 2),
+    "concat": (1, 99), "size": (1, 1), "reshape": (3, 3),
+    "db": (1, 1), "undb": (1, 1), "dbm": (1, 1), "pH": (1, 1), "fromPH": (1, 1),
+    "real": (1, 1), "imag": (1, 1), "conj": (1, 1), "arg": (1, 1), "mag": (1, 1),
+    "format": (1, 99), "text": (1, 1), "char": (1, 1), "ascii": (1, 1), "upper": (1, 1), "lower": (1, 1),
+    "integrate": (2, 4), "derivative": (2, 2), "roots": (1, 1), "fzero": (2, 2), "minimize": (2, 2),
+    "surface": (3, 3),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -83,7 +144,10 @@ class Evaluator:
         self.lookup_equation = lookup_equation
         self.depth = 0
         self.equation_names: Callable[[], List[str]] = lambda: []
-        self.import_hint: Callable[[str], Optional[str]] = lambda name: None  # set by the Interpreter
+        self.import_hint: Callable[[str], Optional[str]] = lambda _name: None  # set by the Interpreter
+        self.lookup_function: Callable[[str], Optional[object]] = lambda _name: None
+        self.function_names: Callable[[], List[str]] = lambda: []
+        self.interpreter: Optional[object] = None  # set by the Interpreter; runs user functions
 
     # ---- entry point -----------------------------------------------------------------------
     def eval(self, node, scope: Scope):
@@ -99,38 +163,48 @@ class Evaluator:
             return Quantity(node.value)
         if isinstance(node, S.QuantityLit):
             return Quantity.from_unit(node.value, node.unit)
+        if isinstance(node, S.StringLit):
+            return Text(node.value)
         if isinstance(node, S.Name):
+            if node.name == "i" and node.name not in scope.values:
+                return Quantity(complex(0, 1))
+            if node.name in BOOLEANS:
+                return BOOLEANS[node.name]
             value = scope.get(node.name)
             if value is None:
+                function = self.lookup_function(node.name)
+                if function is not None:
+                    return self._function_reference(function)
                 raise self._undefined(node.name, node.span, scope)
             return value
         if isinstance(node, S.Unary):
+            if node.op == "not":
+                return not self.condition(node.operand, scope)
             return negate(self.eval(node.operand, scope))
         if isinstance(node, S.Binary):
-            left = self.eval(node.left, scope)
-            right = self.eval(node.right, scope)
-            if node.op == "+":
-                return add_linear(left, right)
-            if node.op == "-":
-                return subtract_linear(left, right)
-            if node.op == "*":
-                return multiply_linear(left, right)
-            if node.op == "/":
-                return divide_linear(left, right)
-            if not isinstance(left, Quantity) or not isinstance(right, Quantity):
-                raise ForgeEvalError("vectors and matrices cannot be raised to a power", node.span)
-            return left ** right
+            return self._binary(node, scope)
         if isinstance(node, S.VectorLiteral):
             return make_vector([self.eval(item, scope) for item in node.items])
         if isinstance(node, S.MatrixLiteral):
             return make_matrix([[self.eval(item, scope) for item in row] for row in node.rows])
+        if isinstance(node, S.ListLiteral):
+            from .linear_algebra import concatenate
+
+            return concatenate([self.eval(item, scope) for item in node.items])
         if isinstance(node, S.Call):
-            if node.func in ARITY:
-                return self._call_function(node, scope)
-            eq, values = self.call_equation(node, scope)
-            return values[eq.primary]
+            return self.call(node, scope)
         if isinstance(node, S.Index):
-            return index_linear(self.eval(node.obj, scope), [self.eval(item, scope) for item in node.indices])
+            count = self.eval(node.count, scope) if node.count is not None else None
+            target = self.eval(node.obj, scope)
+            indices = [self.eval(item, scope) for item in node.indices]
+            if count is None and not any(isinstance(item, S.Name) and item.name == ":" for item in node.indices) \
+                    and not any(isinstance(item, S.Binary) and item.op == ":" for item in node.indices):
+                return index_linear(target, indices)
+            results = select(target, indices, count)
+            if len(results) != 1:
+                raise ForgeEvalError("a selection such as M[i, j] must pick one value", node.span,
+                                     hint="Use M[i] for a row, or M[:, j:j+n] for several values.")
+            return results[0]
         if isinstance(node, S.Member):
             if isinstance(node.obj, S.Call) and node.obj.func not in ARITY:
                 eq, values = self.call_equation(node.obj, scope)
@@ -139,11 +213,66 @@ class Evaluator:
                         f"{eq.name} has no output named '{node.attr}'", node.span,
                         hint=f"Its outputs are: {', '.join(eq.outputs)}")
                 return values[node.attr]
+            if isinstance(node.obj, S.Call):
+                raise ForgeSyntaxError(f"{node.obj.func}() does not have a named part '{node.attr}'", node.span)
+            target = self.eval(node.obj, scope)
+            if isinstance(target, Matrix) and node.attr == "T":
+                return transpose(target)
             raise ForgeSyntaxError("Only the result of an equation call has named outputs", node.span,
                                    hint="For example: Force(m = 2 kg, a = 3 m/s^2).F")
-        if isinstance(node, S.StringLit):
-            raise ForgeSyntaxError("Text can only be used with print and in equation metadata", node.span)
         raise TypeError(f"cannot evaluate {node!r}")  # pragma: no cover
+
+    # ---- operators -------------------------------------------------------------------------
+    def _binary(self, node: S.Binary, scope: Scope):
+        op = node.op
+        if op in ("and", "or"):
+            left = self.condition(node.left, scope)
+            if op == "and" and not left:
+                return False
+            if op == "or" and left:
+                return True
+            return self.condition(node.right, scope)
+        left = self.eval(node.left, scope)
+        right = self.eval(node.right, scope)
+        if op in COMPARISONS:
+            return compare(left, right, op, node.span)
+        if op == "+":
+            return add_linear(left, right)
+        if op == "-":
+            return subtract_linear(left, right)
+        if op in ("*", "*."):
+            return multiply_linear(left, right)
+        if op == "/":
+            return divide_linear(left, right)
+        if op == "/.":
+            return elementwise(left, right, "/")
+        if not isinstance(left, Quantity) or not isinstance(right, Quantity):
+            if isinstance(left, Text) or isinstance(right, Text):
+                raise ForgeEvalError("cannot raise text to a power", node.span)
+            raise ForgeEvalError("vectors and matrices cannot be raised to a power", node.span)
+        return left ** right
+
+    def loop_values(self, node, scope: Scope) -> List[Value]:
+        """The values a `for` loop walks: a range, a vector, matrix rows, or the characters of text."""
+        if isinstance(node, S.Range):
+            from .linear_algebra import make_range
+
+            start = self.eval(node.start, scope)
+            stop = self.eval(node.stop, scope)
+            step = self.eval(node.step, scope) if node.step is not None else Quantity(1)
+            return list(make_range(start, stop, step).items)
+        value = self.eval(node, scope)
+        if isinstance(value, Vector):
+            return list(value.items)
+        if isinstance(value, Matrix):
+            return [Vector(row) for row in value.rows]
+        if isinstance(value, Text):
+            return [Text(character) for character in value.value]
+        return [value]
+
+    def condition(self, node, scope: Scope) -> bool:
+        """Evaluate a condition to True/False.  Comparisons give booleans; numbers are true when nonzero."""
+        return truth(self.eval(node, scope), node.span)
 
     # ---- names -----------------------------------------------------------------------------
     def _undefined(self, name: str, span: Optional[Span], scope: Scope) -> ForgeNameError:
@@ -159,30 +288,134 @@ class Evaluator:
                 parts.append(tip)
         return UndefinedVariable(f"'{name}' is not defined", span, hint=" ".join(parts) or None)
 
+    # ---- calls -----------------------------------------------------------------------------
+    def call(self, node: S.Call, scope: Scope):
+        name = node.func
+        if name in ARITY:
+            return self._call_function(node, scope)
+        function = self.lookup_function(name)
+        if function is not None:
+            args = [self.eval(arg, scope) for arg in node.args]
+            kwargs = [(key, self.eval(expr, scope)) for key, expr, _ in node.kwargs]
+            return self.interpreter.call_function(function, args, kwargs, node.span)  # type: ignore[union-attr]
+        eq, values = self.call_equation(node, scope)
+        return values[eq.primary]
+
+    def _function_reference(self, function) -> FunctionReference:
+        return FunctionReference(function.name, lambda value, f=function: self._call_user(f, value))
+
+    def _call_user(self, function, value: Value) -> Value:
+        return self.interpreter.call_function(function, [value], [], None)  # type: ignore[union-attr]
+
+    def as_function(self, value, scope: Scope, span, what: str = "this function"):
+        """A scalar function of one variable: a def function, an equation, or an expression."""
+        if isinstance(value, (FunctionReference, PartialFunction)):
+            return value
+        if isinstance(value, Text):
+            raise ForgeEvalError(f"{what} needs a function such as f, x^2, or an equation name")
+        eq = self.lookup_equation(as_text(value)) if not isinstance(value, Quantity) else None
+        if eq is not None:
+            inputs = list(eq.inputs)
+            if len(inputs) != 1:
+                raise ForgeEvalError(f"{eq.name} needs {len(inputs)} inputs; {what} needs a function of one")
+
+            def call(item: Value, equation=eq, single=inputs[0]) -> Value:
+                return equation.call(self, {single: (item, None)}, span)[1][equation.primary]
+
+            return FunctionReference(eq.name, call)
+        if isinstance(value, Quantity):
+            raise ForgeEvalError(f"{what} needs a function such as f, x^2, or an equation name, found {value}")
+        raise ForgeEvalError(f"{what} needs a function such as f, x^2, or an equation name")
+
+    def _as_numeric_function(self, value, scope: Scope, span, what: str) -> Callable[[float], float]:
+        function = self.as_function(value, scope, span, what)
+
+        def call(x: float) -> float:
+            result = function.call(Quantity(x))
+            if isinstance(result, Quantity):
+                return result.magnitude(result.unit) if result.unit is not None else result.value
+            raise ForgeEvalError(f"{what} must return a number, found text")
+
+        return call
+
     # ---- built-in functions ----------------------------------------------------------------
     def _call_function(self, node: S.Call, scope: Scope):
         name = node.func
         if node.kwargs:
             raise ForgeSyntaxError(f"{name}() takes plain values, not name = value pairs", node.span)
-        args = [self.eval(a, scope) for a in node.args]
         lo, hi = ARITY[name]
-        if not lo <= len(args) <= hi:
+        if not lo <= len(node.args) <= hi:
             want = f"{lo}" if lo == hi else f"{lo} or more"
-            raise ForgeSyntaxError(f"{name}() takes {want} value(s) but got {len(args)}", node.span)
-        return _apply(name, args)
+            raise ForgeSyntaxError(f"{name}() takes {want} value(s) but got {len(node.args)}", node.span)
+        try:
+            if name in CALLBACK_FUNCTIONS:
+                return self._callback(name, node, scope)
+            args = [self.eval(a, scope) for a in node.args]
+            return _apply(name, args)
+        except ForgeError as err:
+            if err.span is None:
+                err.span = node.span
+            raise
+
+    def _callback(self, name: str, node: S.Call, scope: Scope):
+        span = node.span
+        tolerance = None
+        if name == "surface":
+            function, xs, ys = [self.eval(a, scope) for a in node.args]
+            if isinstance(function, PartialFunction):
+                function = function.with_variable("x")
+            numeric = self._as_numeric_function(function, scope, span, "surface()")
+            return _surface(numeric, xs, ys, span)
+        if name == "roots":
+            lines = self.eval(node.args[0], scope)
+            return _real_roots(numeric_items(lines, "roots"), span)
+        if name == "integrate":
+            from_node, to_node = node.args[1], node.args[2]
+            a, b = self.eval(from_node, scope), self.eval(to_node, scope)
+            if len(node.args) > 3:
+                tolerance = self.eval(node.args[3], scope)
+        elif name == "derivative":
+            from_node = to_node = node.args[1]
+            a = b = self.eval(from_node, scope)
+        else:  # fzero, minimize
+            from_node = node.args[1]
+            to_node = node.args[2] if len(node.args) > 2 else from_node
+            a, b = self.eval(from_node, scope), self.eval(to_node, scope)
+        function = _resolve_function(self.eval(node.args[0], scope), (from_node, to_node))
+        numeric = self._as_numeric_function(function, scope, span, f"{name}()")
+        unit = _function_unit(function)
+        if name == "integrate":
+            if not isinstance(a, Quantity) or not isinstance(b, Quantity):
+                raise ForgeEvalError("integrate() limits must be quantities")
+            if a.dim != b.dim:
+                raise UnitError("integrate() limits must have matching units")
+            dimension = (unit.dim if unit is not None else DIMLESS) * a.dim
+            tolerance = scale_free(tolerance, span) if tolerance is not None else 1e-9
+            return Quantity(adaptive_simpson(numeric, a.value, b.value, tolerance), dimension)
+        if name == "derivative":
+            dimension = (unit.dim if unit is not None else DIMLESS) / a.dim
+            step = max(1e-6, abs(a.value) * 1e-6)
+            value = (numeric(a.value + step) - numeric(a.value - step)) / (2 * step)
+            return Quantity(value, dimension)
+        if name == "fzero":
+            root = bisect(numeric, a.value, b.value)
+            return Quantity(root, a.dim)
+        best, best_value = golden(numeric, a.value, b.value)
+        return Vector((Quantity(best, a.dim), Quantity(best_value, unit.dim if unit is not None else DIMLESS)))
 
     # ---- equation calls --------------------------------------------------------------------
     def call_equation(self, node: S.Call, scope: Scope):
         eq = self.lookup_equation(node.func)
         if eq is None:
-            tip = _suggest(node.func, list(ARITY) + list(self.equation_names())) or self.import_hint(node.func)
-            raise ForgeNameError(f"'{node.func}' is not a function or an equation", node.func_span or node.span,
-                                 hint=tip)
+            tip = _suggest(node.func, list(ARITY) + list(self.equation_names()) + list(self.function_names())) \
+                or self.import_hint(node.func)
+            raise ForgeNameError(f"'{node.func}' is not a function, function definition, or equation",
+                                 node.func_span or node.span, hint=tip)
         if node.args:
             raise ForgeSyntaxError(
                 f"{eq.name}() needs named values", node.span,
                 hint=f"Write: {eq.name}({', '.join(i + ' = ...' for i in eq.inputs)})", )
-        args: Dict[str, Tuple[Quantity, Optional[Span]]] = {}
+        args: Dict[str, Tuple[Value, Optional[Span]]] = {}
         for name, expr, name_span in node.kwargs:
             if name in args:
                 raise ForgeSyntaxError(f"'{name}' is given twice in this call", name_span)
@@ -196,15 +429,165 @@ class Evaluator:
             self.depth -= 1
 
 
+def _resolve_function(value, limit_nodes):
+    """`integrate(t^2, 0, 1)`: a bare expression is a function of the variable used in the limits."""
+    if isinstance(value, PartialFunction):
+        names = set(S.names_in(value.expression))
+        for node in limit_nodes:
+            for name in S.names_in(node):
+                if name in names:
+                    return value.with_variable(name)
+    return value
+
+
+def _function_unit(function) -> Optional[Quantity]:
+    """The unit of a trial evaluation, used to give integrals and derivatives units."""
+    try:
+        result = function.call(Quantity(1.0)) if hasattr(function, "call") else None
+    except ForgeError:
+        return None
+    return result if isinstance(result, Quantity) else None
+
+
+
+
+
+def _real_roots(coefficients: List[Quantity], span) -> Vector:
+    dims = {item.dim for item in coefficients}
+    if len(dims) != 1:
+        raise UnitError("roots() needs coefficients with matching units", span)
+    from .linear_algebra import polynomial_roots
+
+    values = polynomial_roots([item.value for item in coefficients])
+    roots = []
+    for value in sorted(values):
+        nearest = round(value)
+        value = float(nearest) if abs(value - nearest) < 1e-9 else value
+        roots.append(Quantity(value))
+    if not roots:
+        raise ForgeEvalError("this polynomial has no real roots", span,
+                             hint="Write the coefficients from the constant term up: roots(<c, b, a>) solves c + b x + a x².")
+    return Vector(tuple(roots))
+
+
+def scale_free(value, span) -> float:
+    if not isinstance(value, Quantity) or not value.dim.is_dimensionless:
+        raise UnitError("a tolerance must be a plain number", span)
+    return abs(value.value)
+
+
+
+
+
+def truth(value, span=None) -> bool:
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, Quantity):
+        raise ForgeEvalError("a condition needs true or false, found text or a vector", span)
+    if not value.dim.is_dimensionless:
+        raise UnitError(f"a condition needs true or false, not {describe_full(value.dim)}", span,
+                        hint="Compare quantities first, e.g. speed > 20 m/s.")
+    if value.is_complex:
+        raise ForgeEvalError("a complex number cannot be used as a condition", span)
+    return value.value != 0
+
+
+COMPARISONS = ("==", "!=", "<=", ">=", "<", ">")
+CALLBACK_FUNCTIONS = frozenset({"integrate", "derivative", "roots", "fzero", "minimize", "surface"})
+
+
+def compare(left, right, op: str, span=None):
+    """Comparisons: equality works for any two values; ordering needs two numbers or two texts."""
+    if op in ("==", "!="):
+        same = _equal(left, right)
+        return same if op == "==" else not same
+    if isinstance(left, Text) and isinstance(right, Text):
+        return {"<": left.value < right.value, ">": left.value > right.value,
+                "<=": left.value <= right.value, ">=": left.value >= right.value}[op]
+    if not isinstance(left, Quantity) or not isinstance(right, Quantity):
+        raise ForgeEvalError(f"cannot compare {_describe(left)} with {op}", span,
+                             hint="Use == or != to compare text or vectors.")
+    if left.dim != right.dim:
+        raise UnitError(f"cannot compare {describe_full(left.dim)} with {describe_full(right.dim)}", span)
+    if left.is_complex or right.is_complex:
+        raise ForgeEvalError("complex numbers cannot be ordered with < or >", span,
+                             hint="Compare magnitudes with abs(), or parts with real() and imag().")
+    a, b = left.value, right.value
+    return {"<": a < b, ">": a > b, "<=": a <= b, ">=": a >= b}[op]
+
+
+def _equal(left, right) -> bool:
+    if isinstance(left, Text) or isinstance(right, Text):
+        return as_text(left) == as_text(right)
+    if isinstance(left, Quantity) and isinstance(right, Quantity):
+        if left.dim != right.dim:
+            return False
+        return left.value == right.value
+    if isinstance(left, Vector) and isinstance(right, Vector):
+        return len(left.items) == len(right.items) and all(
+            _equal(a, b) for a, b in zip(left.items, right.items))
+    return left == right
+
+
+def _describe(value) -> str:
+    return "text" if isinstance(value, Text) else describe_full(value.dim) if isinstance(value, Quantity) \
+        else type(value).__name__.lower()
+
+
 # ---- function table -----------------------------------------------------------------------
 def _dimless(q: Quantity, fname: str, what: str = "a plain number") -> float:
     if not q.dim.is_dimensionless:
         raise UnitError(f"{fname}() needs {what}, found {describe_full(q.dim)}",
                         hint="Divide by a reference quantity first, e.g. ln(x / x0).")
+    if q.is_complex:
+        raise ForgeEvalError(f"{fname}() needs a real number")
+    return q.value
+
+
+def _plain_integer(value, label):
+    if not isinstance(value, Quantity) or not value.is_plain or not value.value.is_integer():
+        raise ForgeEvalError(f"{label} must be a plain whole number")
+    return int(value.value)
+
+
+def _scalar_in(value, fname: str) -> Quantity:
+    if not isinstance(value, Quantity):
+        raise ForgeEvalError(f"{fname}() needs a number, found {type(value).__name__.lower()}")
+    return value
+
+
+def _scalars(args, fname: str) -> List[Quantity]:
+    return [_scalar_in(arg, fname) for arg in args]
+
+
+def _angle(q: Quantity, fname: str) -> float:
+    """sin/cos/tan take an angle (converted to radians) or a plain number of radians."""
+    if not isinstance(q, Quantity):
+        raise ForgeEvalError(f"{fname}() needs a number")
+    if q.dim == ANGLE:
+        return q.value
+    if not q.dim.is_dimensionless:
+        raise UnitError(f"{fname}() needs an angle or a plain number, found {describe_full(q.dim)}")
     return q.value
 
 
 def _apply(name: str, args: List[object]):
+    if name == "format":
+        return Text("".join(as_text(arg) for arg in args))
+    if name == "text":
+        return Text(as_text(args[0]))
+    if name == "char":
+        code = _plain_integer(args[0], "char() code point")
+        if not 0 <= code <= 0x10FFFF:
+            raise ForgeEvalError("char() needs a code point from 0 to 1114111")
+        return Text(chr(code))
+    if name == "ascii":
+        text = as_text(args[0])
+        if not text:
+            raise ForgeEvalError("ascii() needs text with at least one character")
+        return Quantity(ord(text[0]))
+    if name in ("upper", "lower"):
+        return Text(as_text(args[0]).upper() if name == "upper" else as_text(args[0]).lower())
     if name == "transpose":
         if not isinstance(args[0], Matrix):
             raise ForgeEvalError("transpose() requires a matrix")
@@ -221,39 +604,97 @@ def _apply(name: str, args: List[object]):
         if not all(isinstance(arg, Vector) for arg in args):
             raise ForgeEvalError("cross() requires two vectors")
         return cross(args[0], args[1])
-    if name in ("sum", "mean", "std", "median"):
+    if name == "solve_system":
+        matrix, vector = args
+        if not isinstance(matrix, Matrix):
+            raise ForgeEvalError("solve_system() needs a square matrix of coefficients")
+        if isinstance(vector, Vector):
+            constants = [_scalar_in(item, "solve_system") for item in vector.items]
+        elif isinstance(vector, Matrix):
+            if vector.shape[1] != 1:
+                raise ForgeEvalError("solve_system() needs a column vector of right-hand sides")
+            constants = list(vector.rows[0]) if vector.shape[0] == 1 else [row[0] for row in vector.rows]
+        else:
+            raise ForgeEvalError("solve_system() needs a vector of right-hand sides")
+        return Vector(tuple(solve_linear(matrix.rows, constants)))
+    if name == "count":
+        return Quantity(len(_items(args[0], "count")))
+    if name == "size":
         value = args[0]
-        if not isinstance(value, Vector):
-            raise ForgeEvalError(f"{name}() requires a vector")
-        items = value.items
-        first = items[0]
-        if any(item.dim != first.dim for item in items):
-            raise UnitError(f"{name}() requires vector elements with matching units")
+        if isinstance(value, Matrix):
+            return Vector((Quantity(value.shape[0]), Quantity(value.shape[1])))
+        if isinstance(value, Vector):
+            return Quantity(len(value.items))
+        if isinstance(value, Text):
+            return Quantity(len(value.value))
+        return Quantity(1)
+    if name in ("sum", "mean", "std", "pstd", "var", "pvar", "median"):
+        items = numeric_items(args[0], name)
         if name == "sum":
-            total = first
+            total = items[0]
             for item in items[1:]:
                 total = total + item
             return total
-        numbers = sorted(item.value for item in items)
         if name == "mean":
-            return Quantity(sum(numbers) / len(numbers), first.dim, first.unit)
+            return mean(items)
         if name == "median":
-            middle = len(numbers) // 2
-            median = numbers[middle] if len(numbers) % 2 else (numbers[middle - 1] + numbers[middle]) / 2
-            return Quantity(median, first.dim, first.unit)
-        mean = sum(numbers) / len(numbers)
-        return Quantity(math.sqrt(sum((number - mean) ** 2 for number in numbers) / len(numbers)), first.dim, first.unit)
+            return median(items)
+        if name == "var":
+            return variance(items, sample=True)
+        if name == "pvar":
+            return variance(items, sample=False)
+        if name == "std":
+            return standard_deviation(items, sample=True)
+        return standard_deviation(items, sample=False)
+    if name == "percentile":
+        fraction = _dimless(_scalar_in(args[1], "percentile"), "percentile")
+        if fraction > 1:
+            fraction /= 100.0
+        return percentile(numeric_items(args[0], "percentile"), fraction)
+    if name == "linreg":
+        if not isinstance(args[0], Vector) or not isinstance(args[1], Vector):
+            raise ForgeEvalError("linreg() needs two vectors of numbers")
+        xs = [_scalar_in(item, "linreg") for item in args[0].items]
+        ys = [_scalar_in(item, "linreg") for item in args[1].items]
+        slope, intercept, r_squared = linear_regression(xs, ys)
+        slope.unit = None
+        intercept.unit = None
+        return Vector((slope, intercept, Quantity(r_squared)))
+    if name == "diff":
+        return diff(numeric_items(args[0], name))
+    if name == "cumsum":
+        return cumsum(numeric_items(args[0], name))
+    if name == "normalize":
+        return normalize(numeric_items(args[0], name))
+    if name == "sort":
+        items = _items(args[0], "sort")
+        order = "asc"
+        if len(args) == 2:
+            order = as_text(args[1])
+            if order not in ("asc", "desc"):
+                raise ForgeEvalError('sort() order must be "asc" or "desc"')
+        return Vector(tuple(sorted_items(items, order)))
+    if name == "select":
+        source = args[0]
+        indices = args[1]
+        if not isinstance(indices, Vector):
+            raise ForgeEvalError("select() needs a vector of indices")
+        positions = [_plain_integer(item, "select() index") for item in indices.items]
+        items = _items(source, "select")
+        out = []
+        for position in positions:
+            if not 0 <= position < len(items):
+                raise ForgeEvalError(f"select() index {position} is out of range")
+            out.append(items[position])
+        return Vector(tuple(out))
+    if name == "concat":
+        from .linear_algebra import concatenate
+
+        return concatenate(args)
     if name == "linspace":
-        start, stop, count = args
-        n = _plain_integer(count, "linspace() sample count")
-        if n < 1 or n > 100000:
-            raise ForgeEvalError("linspace() sample count must be between 1 and 100000")
-        if start.dim != stop.dim:
-            raise UnitError("linspace() endpoints must have matching units")
-        if n == 1:
-            return Vector((start,))
-        return Vector(tuple(Quantity(start.value + i * (stop.value - start.value) / (n - 1), start.dim,
-                                    start.unit) for i in range(n)))
+        return _linspace(args)
+    if name == "logspace":
+        return _logspace(args)
     if name == "range":
         if len(args) == 1:
             start, stop, step = Quantity(0), args[0], Quantity(1)
@@ -261,98 +702,222 @@ def _apply(name: str, args: List[object]):
             start, stop, step = args[0], args[1], Quantity(1)
         else:
             start, stop, step = args
-        if start.is_plain and stop.dim != DIMLESS:
-            start = Quantity(start.value, stop.dim, stop.unit)
-        if start.dim != stop.dim:
-            raise UnitError("range() start and stop must have compatible units")
-        if step.is_plain and start.dim != DIMLESS:
-            step = Quantity(step.value, start.dim, start.unit)
-        if step.dim != start.dim:
-            raise UnitError("range() step must have compatible units")
-        if step.value == 0:
-            raise ForgeEvalError("range() step cannot be zero")
-        values = []
-        current = start.value
-        predicate = (lambda x: x < stop.value) if step.value > 0 else (lambda x: x > stop.value)
-        while predicate(current):
-            if len(values) >= 100000:
-                raise ForgeEvalError("range() is limited to 100000 values")
-            values.append(Quantity(current, start.dim, start.unit))
-            current += step.value
-        return Vector(tuple(values))
+        return make_range(start, stop, step)
+    if name == "reshape":
+        return _reshape(args)
+
     if name == "db":
-        q = args[0]
-        if q.value <= 0 or not q.dim.is_dimensionless:
-            raise UnitError("db() requires a positive dimensionless ratio")
+        q = _scalar_in(args[0], "db")
+        if q.value <= 0:
+            raise ForgeEvalError("db() needs a positive number")
         return Quantity(10 * math.log10(q.value), lookup_unit("dB").dim, lookup_unit("dB"))
     if name == "undb":
         q = args[0]
-        if q.dim != lookup_unit("dB").dim:
+        if not isinstance(q, Quantity) or q.dim != lookup_unit("dB").dim:
             raise UnitError("undb() requires a dB value")
         return Quantity(10 ** (q.value / 10))
-    if name in ("floor", "ceil", "round"):
-        q = args[0]
+    if name == "dbm":
+        q = _scalar_in(args[0], "dbm")
+        if q.dim != DIMLESS:
+            raise UnitError("dbm() needs a power in watts, such as 5 mW; divide by 1 W if needed")
+        if q.value <= 0:
+            raise ForgeEvalError("dbm() needs a positive power")
+        return Quantity(10 * math.log10(q.value / 1e-3), lookup_unit("dB").dim, lookup_unit("dB"))
+    if name in ("pH", "fromPH"):
+        if name == "pH":
+            q = _scalar_in(args[0], "pH")
+            if q.value <= 0:
+                raise ForgeEvalError("pH() needs a positive concentration (use mol/L)")
+            return Quantity(-math.log10(q.value))
+        return Quantity(10 ** (-_dimless(_scalar_in(args[0], "fromPH"), "fromPH")))
+    if name in ("real", "imag", "conj", "arg", "mag"):
+        return _complex_part(name, _scalar_in(args[0], name))
+    if name in ("floor", "ceil", "round", "sign"):
+        q = _scalar_in(args[0], name)
         if not q.dim.is_dimensionless:
             raise UnitError(f"{name}() requires a dimensionless value")
+        if q.is_complex:
+            raise ForgeEvalError(f"{name}() needs a real number")
+        if name == "floor":
+            return Quantity(math.floor(q.value))
+        if name == "ceil":
+            return Quantity(math.ceil(q.value))
+        if name == "sign":
+            return Quantity((q.value > 0) - (q.value < 0))
         digits = _plain_integer(args[1], "round() digits") if len(args) == 2 else 0
-        value = math.floor(q.value) if name == "floor" else math.ceil(q.value) if name == "ceil" else round(q.value, digits)
-        return Quantity(value)
+        return Quantity(round(q.value, digits))
     if name == "log2":
-        x = _dimless(args[0], name)
+        x = _dimless(_scalar_in(args[0], name), name)
         if x <= 0:
             raise ForgeEvalError("log2() needs a positive number")
         return Quantity(math.log2(x))
-    if not all(isinstance(arg, Quantity) for arg in args):
-        raise ForgeEvalError(f"{name}() requires scalar quantities")
+    if name == "clamp":
+        value, low, high = _scalars(args, name)
+        for other in (low, high):
+            if other.dim != value.dim:
+                raise UnitError("clamp() needs three values of the same kind")
+        return Quantity(min(max(value.value, low.value), high.value), value.dim, value.unit)
+    if name in ("min", "max"):
+        if all(isinstance(arg, (Quantity, Text)) for arg in args):
+            first = args[0]
+            for other in args[1:]:
+                if isinstance(first, Text) != isinstance(other, Text):
+                    raise ForgeEvalError(f"{name}() needs values of one kind")
+                if isinstance(first, Quantity) and other.dim != first.dim:  # type: ignore[union-attr]
+                    raise UnitError(f"{name}() needs values of the same kind, found {describe_full(first.dim)} "
+                                    f"and {describe_full(other.dim)}")  # type: ignore[union-attr]
+            if isinstance(first, Text):
+                return min(args, key=lambda q: as_text(q)) if name == "min" else max(args, key=lambda q: as_text(q))
+            pick = min(args, key=lambda q: q.value) if name == "min" else max(args, key=lambda q: q.value)
+            return pick
+        items = []
+        for arg in args:
+            items.extend(_items(arg, name))
+        if not items:
+            raise ForgeEvalError(f"{name}() needs at least one value")
+        if all(isinstance(item, (Quantity, Text)) for item in items):
+            return _apply(name, list(items))
+        raise ForgeEvalError(f"{name}() cannot compare rows")
+    scalars = _scalars(args, name)
     try:
         if name in ("sin", "cos", "tan"):
-            q = args[0]
-            if q.dim not in (DIMLESS, ANGLE):
-                raise UnitError(f"{name}() needs an angle or a plain number, found {describe_full(q.dim)}")
-            return Quantity({"sin": math.sin, "cos": math.cos, "tan": math.tan}[name](q.value))
+            angle = _angle(scalars[0], name)
+            value = {"sin": math.sin, "cos": math.cos, "tan": math.tan}[name](angle)
+            return Quantity(value)
+        if name in ("sinh", "cosh", "tanh"):
+            x = _dimless(scalars[0], name)
+            return Quantity(getattr(math, name)(x))
         if name in ("asin", "acos"):
-            x = _dimless(args[0], name)
+            x = _dimless(scalars[0], name)
             if not -1.0 <= x <= 1.0:
                 raise ForgeEvalError(f"{name}() needs a value between -1 and 1, found {x:g}")
-            return Quantity(math.asin(x) if name == "asin" else math.acos(x))
+            result = math.asin(x) if name == "asin" else math.acos(x)
+            return Quantity(result, ANGLE, lookup_unit("rad"))
         if name == "atan":
-            return Quantity(math.atan(_dimless(args[0], name)))
+            return Quantity(math.atan(_dimless(scalars[0], name)), ANGLE, lookup_unit("rad"))
         if name == "atan2":
-            y, x = args
+            y, x = scalars
             if y.dim != x.dim:
                 raise UnitError(f"atan2() needs two values of the same kind, found {describe_full(y.dim)} "
                                 f"and {describe_full(x.dim)}")
-            return Quantity(math.atan2(y.value, x.value))
+            return Quantity(math.atan2(y.value, x.value), ANGLE, lookup_unit("rad"))
         if name == "exp":
-            return Quantity(math.exp(_dimless(args[0], name)))
+            return Quantity(cmath.exp(complex(scalars[0].value)) if scalars[0].is_complex
+                            else math.exp(_dimless(scalars[0], name)))
         if name in ("ln", "log"):
-            x = _dimless(args[0], name)
+            base = None
+            if len(scalars) == 2:
+                base = _dimless(scalars[1], name)
+                if base <= 0 or base == 1:
+                    raise ForgeEvalError("log() base must be positive and not 1")
+            q = scalars[0]
+            if q.is_complex:
+                if base is not None:
+                    raise ForgeEvalError("log() with two arguments needs a real number")
+                result = cmath.log(complex(q.value))
+                return Quantity(result)
+            x = _dimless(q, name)
             if x <= 0:
                 raise ForgeEvalError(f"{name}() needs a positive number, found {x:g}")
+            if base is not None:
+                return Quantity(math.log(x) / math.log(base))
             return Quantity(math.log(x) if name == "ln" else math.log10(x))
-        if name == "sqrt":
-            q = args[0]
-            if q.value < 0:
-                raise ForgeEvalError(f"sqrt() of a negative number ({q})")
+        if name in ("sqrt", "cbrt"):
+            q = scalars[0]
+            if name == "cbrt":
+                if q.value < 0 and not q.is_complex:
+                    return Quantity(-((-q.value) ** (1 / 3)), q.dim ** Fraction(1, 3))
+                return q ** Quantity(1 / 3)
+            if q.value < 0 and not q.is_complex:
+                raise ForgeEvalError(f"sqrt() of a negative number ({q})",
+                                     hint="The result would be imaginary; write it with i, e.g. sqrt(-1 + 0i).")
             return q ** Quantity(0.5)
         if name == "abs":
-            q = args[0]
+            q = scalars[0]
+            if q.is_complex:
+                return Quantity(abs(q.value), q.dim)
             keep = q.unit is not None and not q.unit.affine
             return Quantity(abs(q.value), q.dim, q.unit if keep else None)
-        if name in ("min", "max"):
-            first = args[0]
-            for other in args[1:]:
-                if other.dim != first.dim:
-                    raise UnitError(f"{name}() needs values of the same kind, found {describe_full(first.dim)} "
-                                    f"and {describe_full(other.dim)}")
-            pick = min(args, key=lambda q: q.value) if name == "min" else max(args, key=lambda q: q.value)
-            return pick
     except OverflowError:
         raise ForgeEvalError(f"{name}() result is too large to represent") from None
     raise AssertionError(name)  # pragma: no cover
 
 
-def _plain_integer(value, label):
-    if not isinstance(value, Quantity) or not value.is_plain or not value.value.is_integer():
-        raise ForgeEvalError(f"{label} must be a plain whole number")
-    return int(value.value)
+def _items(value, fname: str) -> List[Element]:
+    if isinstance(value, Vector):
+        return list(value.items)
+    if isinstance(value, Matrix):
+        return [Vector(row) for row in value.rows]
+    raise ForgeEvalError(f"{fname}() requires a vector or matrix")
+
+
+def sorted_items(items: List[Element], order: str) -> List[Element]:
+    return ascending_all(items) if order == "asc" else descending_all(items)
+
+
+def _linspace(args) -> Vector:
+    start, stop, count = _scalars(args, "linspace")
+    n = _plain_integer(count, "linspace() sample count")
+    if n < 1 or n > 100000:
+        raise ForgeEvalError("linspace() sample count must be between 1 and 100000")
+    if start.dim != stop.dim:
+        raise UnitError("linspace() endpoints must have matching units")
+    if n == 1:
+        return Vector((start,))
+    return Vector(tuple(Quantity(start.value + i * (stop.value - start.value) / (n - 1), start.dim,
+                                 start.unit) for i in range(n)))
+
+
+def _logspace(args) -> Vector:
+    start = _dimless(_scalar_in(args[0], "logspace"), "logspace")
+    stop = _dimless(_scalar_in(args[1], "logspace"), "logspace")
+    n = _plain_integer(args[2], "logspace() sample count") if len(args) == 3 else 50
+    if n < 1 or n > 100000:
+        raise ForgeEvalError("logspace() sample count must be between 1 and 100000")
+    if n == 1:
+        return Vector((Quantity(10.0 ** start),))
+    return Vector(tuple(Quantity(10.0 ** (start + i * (stop - start) / (n - 1))) for i in range(n)))
+
+
+def _reshape(args) -> Matrix:
+    source, rows, columns = args
+    items = _items(source, "reshape")
+    r = _plain_integer(rows, "reshape() rows")
+    c = _plain_integer(columns, "reshape() columns")
+    if r * c != len(items):
+        raise ForgeEvalError(f"reshape() needs {r}x{c} = {r * c} values, found {len(items)}")
+    flat = []
+    for item in items:
+        if isinstance(item, Quantity):
+            flat.append(item)
+        else:
+            flat.extend(item.items)  # rows are flattened
+    return make_matrix([[flat[i * c + j] for j in range(c)] for i in range(r)])
+
+
+def _surface(numeric, xs, ys, span=None) -> Matrix:
+    """surface(f, xs, ys): rows follow ys (north-south), columns follow xs."""
+    if not isinstance(xs, Vector) or not isinstance(ys, Vector):
+        raise ForgeEvalError("surface() needs vectors of x and y coordinates", span)
+    coordinates = [item for item in list(xs.items) + list(ys.items) if isinstance(item, Quantity)]
+    if len(coordinates) != len(xs.items) + len(ys.items):
+        raise ForgeEvalError("surface() needs numeric coordinates", span)
+    return Matrix(tuple(
+        tuple(Quantity(numeric(x.value)) for x in xs.items)  # type: ignore[union-attr]
+        for _y in ys.items
+    ))
+
+
+def _complex_part(name: str, q: Quantity) -> object:
+    value = complex(q.value)
+    if name == "real":
+        return Quantity(value.real, q.dim)
+    if name == "imag":
+        return Quantity(value.imag, q.dim)
+    if name == "mag":
+        return Quantity(abs(value), q.dim)
+    if name == "arg":
+        if value == 0:
+            raise ForgeEvalError("arg() of zero has no phase angle")
+        return Quantity(cmath.phase(value), ANGLE, lookup_unit("rad"))
+    return Quantity(complex(value.real, -value.imag), q.dim)

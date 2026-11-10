@@ -1,4 +1,9 @@
-"""Statement execution: variables, equations, imports/exports, solve, convert, print."""
+"""Statement execution: variables, equations, control flow, imports/exports, solve, print.
+
+Top-level statements run in the session workspace.  Inside `def` the interpreter switches to a
+private frame, so parameters and locals never leak; functions see their own frame first and the
+session's variables (and equations) second, like a script with helper definitions.
+"""
 from __future__ import annotations
 
 import difflib
@@ -11,14 +16,43 @@ from . import syntax as S
 from .equation import Equation
 from .errors import ForgeError, ForgeImportError, ForgeNameError, Source, UnitError
 from .evaluator import Evaluator, Scope
-from .linear_algebra import Value, Vector
+from .linear_algebra import Matrix, Value, Vector
 from .parser import parse
 from .printer import format_equation
 from .quantity import Quantity
 from .solver import solve
+from .text import Text
 from .units import Unit
 
 STDLIB_DIR = Path(__file__).resolve().parent / "stdlib"
+MAX_LOOP_ITERATIONS = 1_000_000
+MAX_CALL_DEPTH = 64
+
+
+class _Return(Exception):
+    def __init__(self, value: Value):
+        self.value = value
+
+
+class _Break(Exception):
+    pass
+
+
+class _Continue(Exception):
+    pass
+
+
+class UserFunction:
+    """A function declared with `def name(params) { body }`."""
+
+    __slots__ = ("name", "params", "default", "body", "definition")
+
+    def __init__(self, definition: S.Def):
+        self.name = definition.name
+        self.params = definition.params
+        self.default = definition.default
+        self.body = definition.body
+        self.definition = definition
 
 
 def _display_path(path: Path) -> str:
@@ -43,11 +77,16 @@ class Interpreter:
         self.plots: List[Dict[str, object]] = []  # every plot drawn in this session
         self.variables: Dict[str, Value] = {}
         self.equations: Dict[str, Equation] = {}
+        self.functions: Dict[str, UserFunction] = {}
         self.worksheets: Dict[str, S.WorksheetDef] = {}
         self._worksheet_defaults: Dict[str, Dict[str, Quantity]] = {}
+        self._frames: List[Dict[str, Value]] = []  # one entry per running function call
+        self._loops = 0
         self.evaluator = Evaluator(self.equations.get)
         self.evaluator.equation_names = lambda: list(self.equations)
         self.evaluator.import_hint = self._import_hint
+        self.evaluator.lookup_function = self.lookup_function
+        self.evaluator.interpreter = self
         self._dirs: List[Path] = [self.base_dir]
         self._loaded: Dict[Path, List[str]] = {}
         self._loading: List[Path] = []
@@ -66,12 +105,146 @@ class Interpreter:
         self.run(text, _display_path(path))
 
     def scope(self) -> Scope:
-        return Scope(self.variables)
+        """The visible variables: the running function's frame on top of the session workspace."""
+        if not self._frames:
+            return Scope(self.variables)
+        merged: Dict[str, Value] = dict(self.variables)
+        merged.update(self._frames[-1])
+        return Scope(merged)
 
+    @property
+    def current_variables(self) -> Dict[str, Value]:
+        return self._frames[-1] if self._frames else self.variables
+
+    def assign(self, name: str, value: Value) -> None:
+        self.current_variables[name] = value
+
+    # ---- control flow ----------------------------------------------------------------------
+    def execute_all(self, statements, source: Source) -> None:
+        for st in statements:
+            self.execute(st, source)
+
+    def execute_control(self, st, source: Source) -> None:
+        if isinstance(st, S.If):
+            for condition, body in st.branches:
+                if condition is None or self.evaluator.condition(condition, self.scope()):
+                    self.execute_all(body, source)
+                    return
+        elif isinstance(st, S.While):
+            self._loops += 1
+            try:
+                count = 0
+                while self.evaluator.condition(st.condition, self.scope()):
+                    count += 1
+                    if count > MAX_LOOP_ITERATIONS:
+                        raise ForgeError(
+                            "this while loop ran a million times without finishing", st.span,
+                            title="Loop limit reached",
+                            hint="Check that the condition can become false, or break out of the loop.")
+                    if not self.run_body(st.body, source):
+                        break
+            finally:
+                self._loops -= 1
+        elif isinstance(st, S.For):
+            values = self.evaluator.loop_values(st.iterable, self.scope())
+            self._loops += 1
+            try:
+                for index, value in enumerate(values):
+                    if index > MAX_LOOP_ITERATIONS:
+                        raise ForgeError("this loop has more than a million values", st.span,
+                                         title="Loop limit reached")
+                    self.assign(st.name, value)
+                    if not self.run_body(st.body, source):
+                        break
+            finally:
+                self._loops -= 1
+        elif isinstance(st, S.Def):
+            self.functions[st.name] = UserFunction(st)
+            self.evaluator.function_names = lambda: list(self.functions)
+        elif isinstance(st, S.Return):
+            value = self.evaluator.eval(st.value, self.scope())
+            if not self._frames:
+                raise ForgeError("'return' can only be used inside a function", st.span,
+                                 title="Unexpected return")
+            raise _Return(value)
+        elif isinstance(st, S.Break):
+            if not self._loops:
+                raise ForgeError("'break' can only be used inside a loop", st.span,
+                                 title="Unexpected break")
+            raise _Break()
+        elif isinstance(st, S.Continue):
+            if not self._loops:
+                raise ForgeError("'continue' can only be used inside a loop", st.span,
+                                 title="Unexpected continue")
+            raise _Continue()
+        else:  # pragma: no cover
+            raise TypeError(st)
+
+    def run_body(self, body, source: Source) -> bool:
+        """Run one loop pass.  False means break; continue simply ends the pass."""
+        try:
+            self.execute_all(body, source)
+        except _Break:
+            return False
+        except _Continue:
+            return True
+        return True
+
+
+
+    def call_function(self, function: UserFunction, args: List[Value], kwargs: list, span=None) -> Value:
+        if kwargs:
+            raise ForgeError(f"{function.name}() takes plain values, not name = value pairs", span,
+                             title="Syntax error")
+        params = function.params
+        if function.default is not None:
+            if not len(params) - 1 <= len(args) <= len(params):
+                raise ForgeError(
+                    f"{function.name}() takes {len(params) - 1} or {len(params)} values but got {len(args)}",
+                    span, title="Syntax error")
+        elif len(args) != len(params):
+            raise ForgeError(
+                f"{function.name}() takes {len(params)} value(s) but got {len(args)}", span,
+                title="Syntax error")
+        frame: Dict[str, Value] = dict(zip(params, args))
+        if len(args) < len(params):
+            frame[params[len(args)]] = self.evaluator.eval(function.default, Scope(frame))
+        if len(self._frames) >= MAX_CALL_DEPTH:
+            raise ForgeError("functions are calling each other too deeply", span,
+                             title="Recursion limit reached")
+        saved_loops = self._loops
+        self._loops = 0
+        self._frames.append(frame)
+        try:
+            self.execute_all(function.body, function.definition.span.source if function.definition.span
+                             else Source("<function>", ""))
+        except _Return as finished:
+            return finished.value
+        finally:
+            self._frames.pop()
+            self._loops = saved_loops
+        return Quantity(0)
+
+    def lookup_function(self, name: str) -> Optional[UserFunction]:
+        return self.functions.get(name)
+
+    # ---- function values for integrate() and friends ------------------------------------------
+    def function_value(self, value: Value, what: str = "function"):
+        """Wrap a user function or expression as a Python callable for mathlib solvers."""
+        from .evaluator import FunctionReference
+
+        if not isinstance(value, FunctionReference):
+            raise ForgeError(f"{what} needs a function, such as def f(x) {{ x^2 }} or an expression in x",
+                             title="Not a function")
+        return value.call
+
+    # ---- statements --------------------------------------------------------------------------
     def execute(self, st, source: Source) -> None:
-        if isinstance(st, S.Assign):
+        if isinstance(st, (S.If, S.While, S.For, S.Def, S.Return, S.Break, S.Continue)):
+            self.execute_control(st, source)
+        elif isinstance(st, S.Assign):
             value = self.evaluator.eval(st.expr, self.scope())
-            self.variables[st.name] = value
+            self.assign(st.name, value)
             if self.echo:
                 self.out(f"{st.name} = {value}")
         elif isinstance(st, S.ExprStmt):
@@ -110,27 +283,27 @@ class Interpreter:
             raise TypeError(st)
 
     def _plot(self, st: S.Plot) -> None:
-        from .desktop import plot_series
-
-        y_value = self.evaluator.eval(st.y, self.scope())
-        if not isinstance(y_value, Vector):
-            raise ForgeError("plot() needs a vector of values", st.span, title="Cannot plot",
-                             hint="Build one with linspace(), range(), or a vector literal like <1, 2, 3>.")
-        x_name = x_value = None
-        if st.x is not None:
-            x_value = self.evaluator.eval(st.x, self.scope())
-            if not isinstance(x_value, Vector):
-                raise ForgeError("the horizontal values of plot() must be a vector", st.span,
-                                 title="Cannot plot")
-            x_name = st.x.name if isinstance(st.x, S.Name) else "x"
-        y_name = st.y.name if isinstance(st.y, S.Name) else "y"
-        x_label, y_label, points = plot_series(x_name, x_value, y_name, y_value)
-        title = f"{y_label} vs {x_label}"
-        self.plots.append({"title": title, "xLabel": x_label, "yLabel": y_label, "points": points})
-        if self.plotter is not None:
-            self.plotter(title, x_label, y_label, points)
+        x_value = self.evaluator.eval(st.x, self.scope()) if st.x is not None else None
+        values = [self.evaluator.eval(node, self.scope()) for node in st.ys]
+        samples = build_samples(
+            values,
+            x_value,
+            x_name=st.x.name if isinstance(st.x, S.Name) else None,
+            y_names=[node.name if isinstance(node, S.Name) else None for node in st.ys],
+            polar=st.polar,
+            kind=st.kind,
+            span=st.span,
+        )
+        plot = samples.as_plot_dict()
+        self.plots.append(plot)
+        if samples.grid is not None:
+            summary = f"{plot['title']} ({len(samples.xs)}x{len(samples.ys)} grid)"
         else:
-            self.out(f"Plot: {title} ({len(points)} points)")
+            summary = f"{plot['title']} ({len(plot['points'])} points)"
+        if self.plotter is not None:
+            self.plotter(plot["title"], plot["xLabel"], plot["yLabel"], plot.get("points") or [])
+        else:
+            self.out(f"Plot: {summary}")
 
     def _define_worksheet(self, definition: S.WorksheetDef) -> None:
         inputs = [item for item in definition.items if isinstance(item, S.WorksheetInput)]
@@ -449,3 +622,106 @@ class Interpreter:
         path = self.base_dir / f"{eq.name}.eq"
         path.write_text(format_equation(eq), encoding="utf-8")
         self.out(f"Exported {eq.name} -> {_display_path(path)}")
+
+
+# ---- plot data ---------------------------------------------------------------------------------
+def _label(value, name: Optional[str]) -> str:
+    """'speed (m/s)' for a named vector of one unit, 'speed' otherwise."""
+    if not name:
+        return "value"
+    items = value.rows[0] if isinstance(value, Matrix) else value.items if isinstance(value, Vector) else ()
+    items = tuple(item for item in items if isinstance(item, Quantity))
+    if items:
+        dims = {item.dim for item in items if isinstance(item, Quantity)}
+        if len(dims) == 1:
+            unit = items[0].unit or Unit.from_dim(items[0].dim)
+            symbol = unit.symbol()
+            return f"{name} ({symbol})" if symbol else name
+    return name
+
+
+def _numeric(value, what: str) -> list:
+    if not isinstance(value, Vector) or any(not isinstance(item, Quantity) for item in value.items):
+        raise ForgeError(f"{what} must be a numeric vector", title="Cannot plot")
+    return [item for item in value.items]
+
+
+def _series(y_value, x_value, y_name: Optional[str], x_name: Optional[str], span=None):
+    ys = _numeric(y_value, "the values of plot()")
+    if x_value is None:
+        return [("", [(index + 1.0, item.value) for index, item in enumerate(ys)])], \
+            "Index", _label(y_value, y_name)
+    xs = _numeric(x_value, "the horizontal values of plot()")
+    if len(xs) != len(ys):
+        raise ForgeError(f"plot() needs x and y of the same length, found {len(xs)} and {len(ys)}",
+                         span, title="Cannot plot")
+    return [("", [(x.value, y.value) for x, y in zip(xs, ys)])], _label(x_value, x_name), _label(y_value, y_name)
+
+
+def build_samples(values, x_value, *, x_name: Optional[str] = None, y_names=None, polar: bool = False,
+                  kind: str = "plot", span=None):
+    """Turn evaluated plot() arguments into a mathlib.Samples graph description."""
+    import math
+
+    from .mathlib import Samples
+
+    y_names = list(y_names or [None] * len(values))
+    if not values:
+        raise ForgeError("plot() needs at least one vector of values", span, title="Cannot plot")
+
+    if kind in ("heatmap", "surface"):
+        if not isinstance(values[0], Matrix):
+            raise ForgeError(f"plot(..., kind = \"{kind}\") needs a matrix of values", span,
+                             title="Cannot plot")
+        grid_units = {item.dim for row in values[0].rows for item in row}
+        if len(grid_units) != 1:
+            raise ForgeError(f"a {kind} needs one unit for all values", span, title="Cannot plot")
+        z_text = _label(values[0], y_names[0])
+        xs = ys = None
+        if x_value is None:
+            xs = [float(i) for i in range(values[0].shape[1])]
+            ys = [float(i) for i in range(values[0].shape[0])]
+        else:
+            first, second = x_value
+            xs = [item.value for item in _numeric(first, "the x coordinates")]
+            ys = [item.value for item in _numeric(second, "the y coordinates")]
+            if len(xs) != values[0].shape[1] or len(ys) != values[0].shape[0]:
+                raise ForgeError(
+                    f"the grid of values is {values[0].shape[0]} rows by {values[0].shape[1]} columns, "
+                    f"but the coordinates are {len(ys)} by {len(xs)}", span, title="Cannot plot",
+                    hint="Build the grid with surface(f, xs, ys): its rows follow y and columns follow x.")
+        grid = [[item.value for item in row] for row in values[0].rows]
+        title = f"{kind.title()} of {z_text}"
+        return Samples(kind=kind, title=title, x_label="x", y_label="y", z_label=z_text,
+                       grid=grid, xs=xs, ys=ys, grid_title=z_text)
+
+    if polar:
+        ys = _numeric(values[0], "the radius values of a polar plot")
+        theta_values = _numeric(x_value, "the angles of a polar plot") if isinstance(x_value, Vector) else None
+        if theta_values is None:
+            raise ForgeError('a polar plot needs angles: plot(theta, r, polar = true)', span, title="Cannot plot")
+        if len(theta_values) != len(ys):
+            raise ForgeError("a polar plot needs one angle for each radius", span, title="Cannot plot")
+        points = [(r.value * math.cos(t.value), r.value * math.sin(t.value))
+                  for t, r in zip(theta_values, ys)]
+        title = f"polar plot of {_label(values[0], y_names[0])}"
+        return Samples(kind="polar", title=title, x_label="x", y_label="y", series=[("", points)])
+
+    if len(values) == 1:
+        series, x_label, y_label = _series(values[0], x_value, y_names[0], x_name, span)
+    else:
+        if x_value is not None:
+            raise ForgeError("plot(x, y1, y2, ...) is not supported; use the same length for every series",
+                             span, title="Cannot plot")
+        series = []
+        for value, name in zip(values, y_names):
+            built, _, _ = _series(value, None, name, None, span)
+            series.append((name or "series", built[0][1]))
+        lengths = {len(points) for _, points in series}
+        if len(lengths) > 1:
+            raise ForgeError("several series in one plot() need the same number of values", span,
+                             title="Cannot plot")
+        x_label = "Index"
+        y_label = "value"
+    title = f"{y_label} vs {x_label}" if len(series) == 1 else "Comparison"
+    return Samples(kind="plot", title=title, x_label=x_label, y_label=y_label, series=series)

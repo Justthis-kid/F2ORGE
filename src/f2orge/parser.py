@@ -1,10 +1,16 @@
 """Recursive-descent parser.
 
-Expression precedence, lowest to highest:   + -   <   * /   <   unary -   <   ^ (right-assoc)
+Expression precedence, lowest to highest:
+
+    or   <   and   <   not   <   comparisons   <   + -   <   * /   <   unary -   <   ^ (right-assoc)
+
 A number immediately followed by a unit name is a quantity literal:  9.81 m/s^2.  Inside such
 a unit the operators must touch their operands (m/s^2, not m / s^2) so that
 `10 m / 2 s` still means (10 m) / (2 s).  Declarations and `convert` targets run to the end of
 the line, so they may be written with spaces.
+
+Blocks (`eq`, `worksheet`, `if`, `while`, `for`, `def`) use braces.  Inside parentheses and
+brackets a newline is insignificant.
 """
 from __future__ import annotations
 
@@ -26,20 +32,20 @@ class Parser:
         self.i = 0
         self.depth = 0  # >0 inside ( ): newlines are then ignored
         self.last_end = 0
+        self._count = None  # the n of a counted selection M[:, j:j+n]
 
     # ---- token access ----------------------------------------------------------------------
     def _index(self, k: int = 0) -> int:
         i, count, last = self.i, 0, len(self.toks) - 1
         while True:
-            if i >= last:
+            if count == k:
+                return min(i, last)
+            i += 1
+            if i > last:
                 return last
             if self.depth > 0 and self.toks[i].kind == "nl":
-                i += 1
                 continue
-            if count == k:
-                return i
             count += 1
-            i += 1
 
     def peek(self, k: int = 0) -> Token:
         return self.toks[self._index(k)]
@@ -128,13 +134,171 @@ class Parser:
                 return self.print_stmt()
             if kw == "plot":
                 return self.plot_stmt()
-            if kw == "for":
-                self.fail("'for' can only be used inside a solve statement", t,
-                          "Write: solve Equation for variable { ... }")
+            if kw in ("if", "for", "while", "def"):
+                return self.block_statement()
+            if kw in ("return", "break", "continue"):
+                return self.flow_statement()
+            if kw in ("elseif", "else"):
+                self.fail(f"'{kw}' must follow an if block on its own line", t,
+                          "Write 'elseif condition {' or 'else {' directly after the previous block.")
             if self.is_op("=", 1):
                 return self.assign()
         expr = self.expression()
         return S.ExprStmt(expr, expr.span)
+
+    def range_expression(self):
+        """Loop values: 1..10, a value with a step (1..10..2), or a comma list (0, 2, 10)."""
+        start = self.expression()
+        if self.is_op(".."):
+            self.next()
+            self.skip_nl()
+            stop = self.expression()
+            step = None
+            if self.is_op(".."):
+                self.next()
+                self.skip_nl()
+                step = self.expression()
+            return S.Range(start, stop, step, self._join(start, step or stop))
+        if self.is_op(","):
+            items = [start]
+            while self.is_op(","):
+                self.next()
+                self.skip_nl()
+                if self.is_op("{"):
+                    break
+                items.append(self.expression())
+            return S.VectorLiteral(tuple(items), self._join(items[0], items[-1]))
+        return start
+
+    def block_statement(self):
+        t = self.peek()
+        if t.text == "if":
+            return self.if_stmt()
+        if t.text == "for":
+            return self.for_stmt()
+        if t.text == "while":
+            return self.while_stmt()
+        return self.def_stmt()
+
+    def flow_statement(self):
+        t = self.next()
+        if t.text == "return":
+            nxt = self.peek()
+            if nxt.kind in ("nl", "eof") or (nxt.kind == "op" and nxt.text in ";}"):
+                self.fail("Expected a value to return", nxt, "Write: return expression")
+            return S.Return(self.expression(), self.span_from(t.start))
+        if t.text == "break":
+            return S.Break(self.span_from(t.start))
+        return S.Continue(self.span_from(t.start))
+
+    def block(self, opener: Token, what: str) -> Tuple[object, ...]:
+        """Parse '{ statements }' for a control-flow block."""
+        while self.peek().kind == "nl":
+            self.next()
+        self.expect_op("{", f"Expected '{{' to start the {what} body",
+                       f"Write: {what} {{ ... }}")
+        body = self.statements_until_brace(opener, what)
+        self.expect_op("}")
+        return tuple(body)
+
+    def statements_until_brace(self, opener: Token, what: str) -> List[object]:
+        body: List[object] = []
+        while True:
+            self.skip_separators()
+            if self.is_op("}"):
+                return body
+            if self.peek().kind == "eof":
+                self.fail(f"This {what} is missing its closing '}}'", opener)
+            body.append(self.statement())
+            if self.is_op("}"):
+                continue
+            t = self.peek()
+            if not (t.kind == "nl" or (t.kind == "op" and t.text in (";", "}"))):
+                self.fail(f"Unexpected {self.describe(t)}; a statement should end here", t,
+                          "Put each statement on its own line, or separate them with ';'.")
+
+    def if_stmt(self):
+        kw = self.next()
+        self.depth += 1  # a condition may wrap onto the next line before its '{'
+        try:
+            return self._if_branches(kw)
+        finally:
+            self.depth -= 1
+
+    def _if_branches(self, kw):
+        branches: List[Tuple[object, Tuple[object, ...]]] = []
+        condition = self.expression()
+        branches.append((condition, self.block(kw, "if")))
+        while True:
+            self.skip_nl()
+            t = self.peek()
+            if t.kind == "ident" and t.text == "elseif":
+                self.next()
+                condition = self.expression()
+                branches.append((condition, self.block(t, "elseif")))
+                continue
+            if t.kind == "ident" and t.text == "else":
+                self.next()
+                branches.append((None, self.block(t, "else")))
+            break
+        return S.If(tuple(branches), self.span_from(kw.start))
+
+    def while_stmt(self):
+        kw = self.next()
+        self.depth += 1
+        try:
+            condition = self.expression()
+        finally:
+            self.depth -= 1
+        return S.While(condition, self.block(kw, "while"), self.span_from(kw.start))
+
+    def for_stmt(self):
+        kw = self.next()
+        name = self.expect_ident("a loop variable name")
+        t = self.peek()
+        if t.kind == "ident" and t.text == "in":
+            self.next()
+            iterable = self.range_expression()
+        elif self.is_op("="):  # MATLAB-style counter: for k = 1..10
+            self.next()
+            iterable = self.range_expression()
+        else:
+            self.fail("Expected 'in' and the values to loop over", t,
+                      f"Write: for {name.text} in 1..10 {{ ... }} or for {name.text} = 1..10 {{ ... }}")
+        body = self.block(kw, "for")
+        return S.For(name.text, iterable, body, self.span_from(kw.start),
+                     Span(self.source, name.start, name.end))
+
+    def def_stmt(self):
+        kw = self.next()
+        name = self.expect_ident("a function name")
+        self.expect_op("(", f"Expected '(' after the function name '{name.text}'",
+                       f"Write: def {name.text}(x) {{ ... }}")
+        self.depth += 1
+        params: List[str] = []
+        default = None
+        while not self.is_op(")"):
+            p = self.expect_ident("a parameter name")
+            if p.text in params:
+                self.fail(f"parameter '{p.text}' is listed twice", p)
+            params.append(p.text)
+            if self.is_op(":"):  # what the parameter measures: def area(r : m) { ... }
+                self.next()
+                self.parse_unit_atoms(tight=False)
+            if self.is_op("="):
+                self.next()
+                default = self.expression()
+                if not self.is_op(")"):
+                    self.fail("only the last parameter can have a default value", self.peek())
+                break
+            if not self.is_op(","):
+                break
+            self.next()
+        self.expect_op(")", "Expected ',' or ')' in this parameter list")
+        self.depth -= 1
+        body = self.block(kw, "function")
+        return S.Def(name.text, tuple(params), default, body, self.span_from(kw.start),
+                     Span(self.source, name.start, name.end))
 
     def assign(self):
         name = self.next()
@@ -181,16 +345,47 @@ class Parser:
         kw = self.next()
         self.expect_op("(", "Expected '(' after 'plot'", "Write: plot(y) or plot(x, y)")
         self.depth += 1
-        first = self.expression()
-        second = None
-        if self.is_op(","):
-            self.next()
-            second = self.expression()
+        args: List[object] = []
+        polar = False
+        kind = "plot"
+        while not self.is_op(")"):
+            option = None
+            t = self.peek()
+            if t.kind == "ident" and t.text in ("polar", "kind") and self.is_op("=", 1):
+                self.next()
+                self.next()
+                option = t.text
+            value = self.expression()
+            if option == "polar":
+                polar = self.bool_option(value, "polar")
+            elif option == "kind":
+                kind = self.kind_option(value)
+            else:
+                args.append(value)
+            if self.is_op(","):
+                self.next()
+                continue
+            break
         self.expect_op(")", "Expected ')' to close this plot")
         self.depth -= 1
-        if second is None:
-            return S.Plot(first, None, self.span_from(kw.start))
-        return S.Plot(second, first, self.span_from(kw.start))
+        if not args:
+            self.fail("plot() needs a vector to draw", kw, "Write: plot(y) or plot(x, y)")
+        if len(args) == 1:
+            return S.Plot((args[0],), None, polar, kind, self.span_from(kw.start))
+        if kind in ("heatmap", "surface") and len(args) == 3:
+            coordinates = S.VectorLiteral((args[0], args[1]))
+            return S.Plot((args[2],), coordinates, polar, kind, self.span_from(kw.start))
+        return S.Plot(tuple(args[1:]), args[0], polar, kind, self.span_from(kw.start))
+
+    def bool_option(self, value, name: str) -> bool:
+        if isinstance(value, S.Name) and value.name in ("true", "false"):
+            return value.name == "true"
+        self.fail(f"{name} = must be true or false", value)
+
+    def kind_option(self, value) -> str:
+        if isinstance(value, S.StringLit) and value.value in ("plot", "line", "heatmap", "surface"):
+            return "plot" if value.value == "line" else value.value
+        self.fail('kind = must be "plot", "heatmap", or "surface"', value)
 
     def convert_stmt(self):
         kw = self.next()
@@ -457,7 +652,56 @@ class Parser:
             return a.span.join(b.span)
         return a.span or b.span
 
+    @staticmethod
+    def is_word(node, word: str) -> bool:
+        return isinstance(node, S.Name) and node.name == word
+
     def expression(self):
+        left = self.and_expression()
+        while self.is_word(self.peek(), "or"):
+            self.next()
+            self.skip_nl()
+            right = self.and_expression()
+            left = S.Binary("or", left, right, self._join(left, right))
+        return left
+
+    def and_expression(self):
+        left = self.not_expression()
+        while self.is_word(self.peek(), "and"):
+            self.next()
+            self.skip_nl()
+            right = self.not_expression()
+            left = S.Binary("and", left, right, self._join(left, right))
+        return left
+
+    def not_expression(self):
+        if self.is_word(self.peek(), "not"):
+            op = self.next()
+            operand = self.not_expression()
+            span = Span(self.source, op.start, operand.span.end if operand.span else op.end)
+            return S.Unary("not", operand, span)
+        return self.comparison()
+
+    _COMPARISONS = ("==", "!=", "<=", ">=", "<", ">")
+
+    def comparison(self):
+        left = self.expression_body()
+        if (self.is_op("<") or self.is_op(">")) and self.is_op("=", 1):
+            self.next()
+            self.next()
+            self.skip_nl()
+            right = self.expression_body()
+            return S.Binary("<=" if self.toks[self.i - 2].text == "<" else ">=", left, right,
+                            self._join(left, right))
+        op = self.peek()
+        if (op.kind == "op" and op.text in self._COMPARISONS) or self.is_word(op, "in"):
+            self.next()
+            self.skip_nl()
+            right = self.expression_body()
+            return S.Binary(op.text, left, right, self._join(left, right))
+        return left
+
+    def expression_body(self):
         left = self.term()
         while self.is_op("+") or self.is_op("-"):
             op = self.next()
@@ -472,7 +716,11 @@ class Parser:
             op = self.next()
             self.skip_nl()
             right = self.unary()
-            left = S.Binary(op.text, left, right, self._join(left, right))
+            text = op.text
+            if self.is_op("."):  # `.*` and `./` element-by-element (MATLAB style; `*` already is)
+                self.next()
+                text += "."
+            left = S.Binary(text, left, right, self._join(left, right))
         return left
 
     def unary(self):
@@ -486,12 +734,21 @@ class Parser:
                 return S.QuantityLit(-operand.value, operand.unit, span)
             if isinstance(operand, S.Number):
                 return S.Number(-operand.value, span)
+            if isinstance(operand, S.Name) and operand.name in ("true", "false"):
+                return S.Unary("not", operand, span)
             return S.Unary("-", operand, span)
         return self.power()
 
     def power(self):
         base = self.postfix()
         if self.is_op("^"):
+            # `^` never opens a value (so `x = a ^2` after an assignment, or a new line after an
+            # expression, is not mistaken for a power): it must touch what precedes it, as a
+            # superscript would, or follow a value with whitespace on both sides.
+            caret = self.peek()
+            spaced = caret.start > self.last_end and self.peek(1).start > caret.end
+            if caret.start != self.last_end and not spaced:
+                return base
             self.next()
             self.skip_nl()
             exp = self.unary()  # right-associative; also allows 2^-3
@@ -512,19 +769,44 @@ class Parser:
                                 Span(self.source, node.span.start, t.end))
             elif t.kind == "op" and t.text == "[":
                 self.next()
-                indices = [self.expression()]
-                while self.is_op(","):
-                    self.next()
-                    indices.append(self.expression())
-                end = self.expect_op("]")
-                node = S.Index(node, tuple(indices), Span(self.source, node.span.start, end.end))
+                self.depth += 1
+                try:
+                    indices, count = self.index_items()
+                    end = self.expect_op("]", "Expected ',' or ']' to close this index")
+                finally:
+                    self.depth -= 1
+                node = S.Index(node, indices, Span(self.source, node.span.start, end.end), count)
             else:
                 return node
+
+    def index_items(self):
+        """Index lists: `:` selects everything along that axis, `j:k` begins a counted selection."""
+        indices = [self.index_item()]
+        while self.is_op(","):
+            self.next()
+            indices.append(self.index_item())
+        return tuple(indices), self._count
+
+    def index_item(self):
+        self._count = None
+        if self.is_op(":"):
+            colon = self.next()
+            return S.Name(":", Span(self.source, colon.start, colon.end))
+        value = self.expression()
+        if self.is_op(":"):
+            self.next()
+            self.skip_nl()
+            self._count = self.expression()
+            return S.Binary(":", value, self._count, self._join(value, self._count))
+        return value
 
     def primary(self):
         t = self.peek()
         if t.kind == "num":
             return self.number_or_quantity()
+        if t.kind == "ident" and t.text in ("true", "false", "i", "and", "or", "not"):
+            self.next()
+            return S.Name(t.text, Span(self.source, t.start, t.end))
         if t.kind == "ident":
             if t.text in KEYWORDS:
                 self.fail(f"'{t.text}' is a keyword and cannot be used as a value", t)
@@ -544,59 +826,98 @@ class Parser:
         if t.kind == "op" and t.text == "<":
             return self.vector_literal("<", ">")
         if t.kind == "op" and t.text == "[":
-            return self.matrix_literal()
+            return self.bracket_literal()
         if t.kind == "str":
-            self.fail("Text can only be used with print and in equation metadata", t)
+            self.next()
+            return S.StringLit(t.value, Span(self.source, t.start, t.end))
         self.fail(f"Expected a value but found {self.describe(t)}", t)
 
-    def vector_literal(self, opening: str, closing: str):
+    def vector_literal(self, opening: str, closing: str, allow_trailing: bool = False):
         start = self.expect_op(opening).start
         self.depth += 1
+        if opening == "<" and self.is_op(">"):  # <> is the empty vector
+            empty = self.next()
+            self.depth -= 1
+            return S.VectorLiteral((), Span(self.source, start, empty.end))
         items = []
         if self.is_op(closing):
             self.fail("A vector must contain at least one value", self.peek())
         while True:
+            if allow_trailing and self.is_op(closing):
+                break
             items.append(self.expression())
             if self.is_op(","):
                 self.next()
-                if self.is_op(closing):
-                    break
                 continue
             break
         self.expect_op(closing, f"Expected ',' or '{closing}' in this vector")
         self.depth -= 1
         return S.VectorLiteral(tuple(items), Span(self.source, start, self.last_end))
 
-    def matrix_literal(self):
+    def bracket_literal(self):
+        """[rows of values] is a matrix; [a, b, c] joins vectors into one."""
         start = self.expect_op("[").start
         self.depth += 1
-        rows = []
         if self.is_op("]"):
-            self.fail("A matrix must contain at least one row", self.peek())
-        while True:
-            if not self.is_op("["):
-                self.fail("Expected a row such as '[1, 2]' in this matrix", self.peek())
-            row = self.vector_literal("[", "]")
-            rows.append(row.items)
-            if self.is_op(","):
-                self.next()
-                continue
-            if self.is_op("]"):
+            self.fail("A matrix or list must contain at least one value", self.peek())
+        items: List[object] = []
+        if self.is_op("["):
+            rows = []
+            while True:
+                if not self.is_op("["):
+                    self.fail("Expected a row such as '[1, 2]' in this matrix", self.peek())
+                row = self.vector_literal("[", "]", allow_trailing=True)
+                rows.append(row.items)
+                if self.is_op(","):
+                    self.next()
+                    if self.is_op("]"):
+                        break
+                    continue
+                if self.is_op("]"):
+                    break
+                if not self.is_op("["):
+                    self.fail("Expected another matrix row or ']' to close the matrix", self.peek())
+            widths = {len(row) for row in rows if row}
+            if len(widths) != 1:
+                self.fail("All matrix rows must have the same number of values",
+                          Span(self.source, start, self.last_end))
+            items.append(S.MatrixLiteral(tuple(rows), Span(self.source, start, self.last_end)))
+            keywords = any(self.is_op(w) for w in ("try", "catch"))  # MATLAB-style start/end
+            if keywords:
+                self.fail("Use [rows of values] for a matrix, or separate rows with commas", self.peek(),
+                          "A list written with [ ] holds one row of values; write rows as [1, 2; 3, 4] "
+                          "or [[1, 2], [3, 4]] for a matrix.")
+        else:
+            while True:
+                items.append(self.expression())
+                if self.is_op(","):
+                    self.next()
+                    if self.is_op("]"):
+                        break
+                    continue
+                if self.is_op(";"):  # [1, 2; 3, 4] is a matrix in MATLAB; here ';' ends a statement
+                    self.fail("Use commas between rows: [[1, 2], [3, 4]]", self.peek())
                 break
-            if not self.is_op("["):
-                self.fail("Expected another matrix row or ']' to close the matrix", self.peek())
-        self.expect_op("]")
+        self.expect_op("]", "Expected ',' or ']' in this matrix or list")
         self.depth -= 1
-        widths = {len(row) for row in rows}
-        if len(widths) != 1:
-            self.fail("All matrix rows must have the same number of values",
-                      Span(self.source, start, self.last_end))
-        return S.MatrixLiteral(tuple(rows), Span(self.source, start, self.last_end))
+        span = Span(self.source, start, self.last_end)
+        if len(items) > 1:
+            return S.ListLiteral(tuple(items), span)
+        only = items[0]
+        if isinstance(only, S.MatrixLiteral):  # [[1, 2]] is the 1x2 matrix [<1, 2>]
+            return only
+        return S.VectorLiteral(tuple(only.items), span)  # [1, 2] is the vector <1, 2>
 
     def number_or_quantity(self):
         tok = self.next()
         nxt = self.peek()
-        if nxt.kind == "ident" and nxt.text not in KEYWORDS:
+        if nxt.kind == "ident" and nxt.text == "i":
+            self.next()  # 3i, 2.5i: the imaginary part of a complex number
+            return S.Number(complex(0, tok.value), Span(self.source, tok.start, nxt.end))
+        if nxt.kind == "ident" and nxt.text not in KEYWORDS and nxt.text != "and":
+            if nxt.text in ("in", "or", "not", "true", "false"):
+                self.fail(f"'{nxt.text}' is a keyword and cannot be used as a unit", nxt,
+                          f"If you meant multiplication, write {tok.text} * {nxt.text}.")
             self.check_unit(nxt.text, Span(self.source, nxt.start, nxt.end),
                             f"If you meant multiplication, write {tok.text} * {nxt.text}.")
             atoms = self.parse_unit_atoms(tight=True)
@@ -608,8 +929,8 @@ class Parser:
         self.depth += 1
         args: List[object] = []
         kwargs: List[Tuple[str, object, Optional[Span]]] = []
-        if not self.is_op(")"):
-            while True:
+        try:
+            while not self.is_op(")"):
                 t = self.peek()
                 if t.kind == "ident" and self.is_op("=", 1) and t.text not in KEYWORDS:
                     self.next()
@@ -619,14 +940,12 @@ class Parser:
                     if kwargs:
                         self.fail("Positional values must come before named ones", t)
                     args.append(self.expression())
-                if self.is_op(","):
-                    self.next()
-                    if self.is_op(")"):  # trailing comma
-                        break
-                    continue
-                break
-        self.expect_op(")", "Expected ',' or ')' in this call")
-        self.depth -= 1
+                if not self.is_op(","):
+                    break
+                self.next()
+            self.expect_op(")", "Expected ',' or ')' in this call")
+        finally:
+            self.depth -= 1
         return S.Call(name_tok.text, tuple(args), tuple(kwargs), self.span_from(name_tok.start),
                       Span(self.source, name_tok.start, name_tok.end))
 

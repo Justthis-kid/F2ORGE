@@ -8,9 +8,13 @@ only a *display hint* remembering how the quantity was written, so `150 kg` prin
     * and /        kept only when the other side is a plain number ("2 * 5 ft" -> "10 ft");
                    otherwise the result prints in simplified SI ("kg*m/s^2" -> "N")
     ^, functions   simplified SI
+
+A value may be complex (`4 + 3i`, or `Z = R + i*omega*L`): quantities with a complex value print
+as `a + bi` with their unit, which is what AC impedance calculations need.
 """
 from __future__ import annotations
 
+import cmath
 import math
 from fractions import Fraction
 from typing import Optional, Union
@@ -19,7 +23,7 @@ from .dimensions import DIMLESS, Dim, describe_full
 from .errors import ForgeEvalError, UnitError
 from .units import KELVIN, Unit
 
-Number = Union[int, float]
+Number = Union[int, float, complex]
 
 
 def format_number(x: float) -> str:
@@ -31,8 +35,33 @@ def format_number(x: float) -> str:
     return f"{x:.10g}"
 
 
-def _safe_pow(base: float, exp: float) -> float:
+def format_complex(z: complex) -> str:
+    """'4', '3i', '-2 + 5i' — the imaginary part without trailing '.0'."""
+    real, imag = z.real, z.imag
+    if imag == 0:
+        return format_number(real)
+    imag_text = "" if abs(imag) == 1 and not real else format_number(abs(imag))
+    if real == 0:
+        return ("-" if imag < 0 else "") + imag_text + "i"
+    sign = "+" if imag > 0 else "-"
+    return f"{format_number(real)} {sign} {imag_text}i"
+
+
+def format_value(x: Number) -> str:
+    return format_complex(x) if isinstance(x, complex) else format_number(x)
+
+
+def _clean(x: Number) -> Number:
+    """Demote a complex number with no imaginary part back to a real float."""
+    if isinstance(x, complex) and x.imag == 0:
+        return x.real
+    return x
+
+
+def _safe_pow(base: Number, exp: Number) -> Number:
     try:
+        if isinstance(base, complex) or isinstance(exp, complex):
+            return _clean(base ** exp)
         return math.pow(base, exp)
     except ValueError:
         raise ForgeEvalError("cannot raise a negative number to a fractional power") from None
@@ -45,19 +74,24 @@ def _safe_pow(base: float, exp: float) -> float:
 class Quantity:
     __slots__ = ("value", "dim", "unit")
 
-    def __init__(self, value: float, dim: Dim = DIMLESS, unit: Optional[Unit] = None):
-        self.value = float(value)
+    def __init__(self, value: Number, dim: Dim = DIMLESS, unit: Optional[Unit] = None):
+        self.value = _clean(complex(value)) if isinstance(value, complex) else float(value)
         self.dim = dim
         self.unit = unit
 
     # ---- construction / conversion -------------------------------------------------------
     @staticmethod
-    def from_unit(number: float, unit: Unit) -> "Quantity":
-        return Quantity(number * unit.scale + unit.offset, unit.dim, unit)
+    def from_unit(number: Number, unit: Unit) -> "Quantity":
+        n = complex(number) if isinstance(number, complex) else number
+        return Quantity(n * unit.scale + unit.offset, unit.dim, unit)
 
-    def magnitude(self, unit: Unit) -> float:
+    def magnitude(self, unit: Unit) -> Number:
         """The number you would write next to `unit`."""
         return (self.value - unit.offset) / unit.scale
+
+    def real_part(self) -> "Quantity":
+        return Quantity(self.value.real if isinstance(self.value, complex) else self.value,
+                        self.dim, self.unit)
 
     def to(self, unit: Unit) -> "Quantity":
         if unit.dim != self.dim:
@@ -71,6 +105,10 @@ class Quantity:
     def is_plain(self) -> bool:
         """A bare number: dimensionless and with no unit hint."""
         return self.dim.is_dimensionless and self.unit is None
+
+    @property
+    def is_complex(self) -> bool:
+        return isinstance(self.value, complex)
 
     # ---- arithmetic ----------------------------------------------------------------------
     def _check_same(self, other: "Quantity", verb: str) -> None:
@@ -128,6 +166,10 @@ class Quantity:
                 hint="Divide by a reference quantity first if you need a dimensionless ratio.",
             )
         x = other.value
+        if isinstance(x, complex):
+            if not self.dim.is_dimensionless:
+                raise UnitError("a quantity with units needs a real exponent")
+            return Quantity(_safe_pow(self.value, x))
         if self.dim.is_dimensionless:
             return Quantity(_safe_pow(self.value, x))
         frac = Fraction(x).limit_denominator(1000)
@@ -150,11 +192,11 @@ class Quantity:
     def __str__(self) -> str:
         if self.unit is not None:
             text = self.unit.symbol()
-            number = format_number(self.magnitude(self.unit))
+            number = format_value(self.magnitude(self.unit))
             return f"{number} {text}" if text else number
         if self.dim.is_dimensionless:
-            return format_number(self.value)
-        return f"{format_number(self.value)} {Unit.from_dim(self.dim).symbol()}"
+            return format_value(self.value)
+        return f"{format_value(self.value)} {Unit.from_dim(self.dim).symbol()}"
 
     def __repr__(self) -> str:
         return f"Quantity({self})"
@@ -162,3 +204,7 @@ class Quantity:
 
 def _q(x: Union[Quantity, Number]) -> Quantity:
     return x if isinstance(x, Quantity) else Quantity(x)
+
+
+def _phase(z: complex) -> float:
+    return cmath.phase(z)

@@ -70,6 +70,7 @@ class Index:
     obj: object
     indices: Tuple[object, ...]
     span: Optional[Span] = None
+    count: Optional[object] = None  # the n in M[:, j:j+n] — a counted selection
 
 
 @dataclass(frozen=True)
@@ -84,8 +85,18 @@ class MatrixLiteral:
     span: Optional[Span] = None
 
 
+@dataclass(frozen=True)
+class ListLiteral:
+    """[a, b, c]: vectors joined into one vector, or matrices joined into more rows."""
+
+    items: Tuple[object, ...]
+    span: Optional[Span] = None
+
+
 def children(node) -> Iterator[object]:
     if isinstance(node, VectorLiteral):
+        yield from node.items
+    elif isinstance(node, ListLiteral):
         yield from node.items
     elif isinstance(node, MatrixLiteral):
         for row in node.rows:
@@ -104,6 +115,8 @@ def children(node) -> Iterator[object]:
     elif isinstance(node, Index):
         yield node.obj
         yield from node.indices
+        if node.count is not None:
+            yield node.count
 
 
 def walk(node) -> Iterator[object]:
@@ -177,10 +190,13 @@ class Convert:
 
 @dataclass(frozen=True)
 class Plot:
-    """plot(y) or plot(x, y): draw workspace vectors in a graph window."""
+    """plot(y), plot(x, y), plot(x, y1, y2), plot(theta, r, polar = true),
+    plot(xs, ys, z, kind = "heatmap")."""
 
-    y: object
+    ys: Tuple[object, ...]
     x: Optional[object] = None
+    polar: bool = False
+    kind: str = "plot"
     span: Optional[Span] = None
 
 
@@ -246,3 +262,73 @@ class WorksheetDef:
     items: Tuple[object, ...]
     span: Optional[Span] = None
     name_span: Optional[Span] = None
+
+
+# ---- control flow ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class Range:
+    """a..b or a..b..step: the values of a for loop (a range step of 1 is implied)."""
+
+    start: object
+    stop: object
+    step: Optional[object] = None
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class If:
+    """if / elseif / else.  `branches` holds (condition, body); an else is the final
+    branch with a None condition."""
+
+    branches: Tuple[Tuple[object, Tuple[object, ...]], ...]
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class While:
+    condition: object
+    body: Tuple[object, ...]
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class For:
+    """for name in iterable { body } — one loop variable over a vector, matrix, or text."""
+
+    name: str
+    iterable: object
+    body: Tuple[object, ...]
+    span: Optional[Span] = None
+    name_span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class Def:
+    """def name(p1, p2, p3 = default) { body }
+
+    Every parameter is positional except the last, which may have a plain-number default.
+    Strings are values in this language, so p1 defaulting to "X" returns a string.
+    """
+
+    name: str
+    params: Tuple[str, ...]
+    default: Optional[object]
+    body: Tuple[object, ...]
+    span: Optional[Span] = None
+    name_span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class Return:
+    value: object
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class Break:
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class Continue:
+    span: Optional[Span] = None

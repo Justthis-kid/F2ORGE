@@ -7,6 +7,10 @@ so only its scale is used.
 
 SI prefixes are applied to units flagged `prefix`: km, mm, MPa, kN, uF ...  Exact table names
 win over prefix splitting, so "min" is the minute and never "milli-inch".
+
+Angles (`rad`, `deg`, `rev`) carry their own dimension, so `rad/s` is an angular velocity while
+`1/s` is a frequency, and multiplying or dividing by an angle preserves it.  `sin`, `cos`, `tan`
+accept angles (converted to radians) or plain numbers (radians).
 """
 from __future__ import annotations
 
@@ -127,8 +131,17 @@ def _build() -> None:
     _add("rad", angle, 1.0, prefix=True, kind="angle")
     _add("deg", angle, math.pi / 180.0, kind="angle", aliases=("°",))
     _add("rev", angle, 2 * math.pi, kind="angle")
-    _add("rpm", angle / TIME, 2 * math.pi / 60, kind="angular velocity")
+    _add("grad", angle, math.pi / 200.0, kind="angle", aliases=("gon",), prefix=True)
+    _add("arcmin", angle, math.pi / 10800.0, kind="angle")
+    _add("arcsec", angle, math.pi / 648000.0, kind="angle")
+    # rpm is revolutions per minute.  Angles are dimensionless in F²ORGE, so rpm is a plain
+    # 1/s *scale* (60 rpm = 1 rev/s), which keeps every 1/s conversion exact for phasors.
+    _add("rps", DIMLESS, 2 * math.pi, kind="angular velocity")
+    _add("rpm", DIMLESS, 2 * math.pi / 60, kind="angular velocity")
     _add("dB", Dim.of(Log=1), kind="logarithmic level")
+    _add("Np", Dim.of(Log=1), math.log(10.0) / 2.0, kind="logarithmic level")  # 1 Np = 8.686 dB
+    _add("%", DIMLESS, 0.01, kind="ratio", aliases=("percent", "pct"))
+    _add("ppm", DIMLESS, 1e-6, kind="ratio")
     for currency in ("USD", "EUR", "GBP", "JPY", "CAD", "AUD"):
         _add(currency, Dim.of(**{currency: 1}), kind="currency")
 

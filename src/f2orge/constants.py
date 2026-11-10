@@ -17,6 +17,8 @@ def _q(value: float, *atoms: Tuple[str, int]) -> Quantity:
     return Quantity.from_unit(value, Unit.from_atoms([(n, F(e)) for n, e in atoms]))
 
 
+BOOLEANS = {"true": True, "false": False}
+
 CONSTANTS: Dict[str, Quantity] = {
     # mathematics
     "pi": Quantity(math.pi),
