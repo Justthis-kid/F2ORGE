@@ -40,6 +40,12 @@ def test_vectors_support_addition_scaling_and_dot_products():
     ]
 
 
+def test_a_vector_operand_is_not_read_as_a_comparison():
+    assert run("v = <1, 2>\nw = <3, 2>\nv + w + <1, 1>") == ["<5, 5>"]
+    assert run("A = [[1, 0], [0, 1]]\n<1, 2> * A") == ["<1, 2>"]
+    assert run("a = 1\nb = 2\na < b\nb > a") == ["true", "true"]
+
+
 def test_matrices_support_matrix_vector_and_matrix_matrix_products():
     assert run("""A = [
   [1, 2]
@@ -269,6 +275,11 @@ def test_multiline_call_and_print():
     assert out == ["area: 6 m²"]
 
 
+def test_a_matrix_may_span_several_lines():
+    assert run("A = [\n  [1, 2]\n  [3, 4]\n]\nA") == ["[[1, 2], [3, 4]]"]
+    assert run("A = [\n  [1, 2],\n  [3, 4]\n]\nA * <1, 1>") == ["<3, 7>"]
+
+
 def test_superscript_power_on_values():
     assert run("x = 3 m\nx²") == ["9 m²"]
     assert run("(2 + 1)²") == ["9"]
@@ -287,7 +298,7 @@ def test_text_is_only_for_print_and_metadata():
     ("solve Force a { }", "Expected 'for'"),
     ("x = @", "Unexpected character"),
     ('print "abc', "closing quote"),
-    ("for = 3", "can only be used inside a solve"),
+    ("for = 3", "Expected a loop variable name"),
     ("import", "Expected an equation name"),
 ])
 def test_syntax_errors_say_what_was_expected(src, needle):

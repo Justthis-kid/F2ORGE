@@ -25,14 +25,21 @@ from .units import Unit, UnknownUnit, lookup_unit, suggest_units
 Atom = Tuple[str, Fraction, Span]
 
 
+def is_literal(node) -> bool:
+    """A value written out in full: `[1, 2]` after such a value is a new list, not an index."""
+    return isinstance(node, (S.Number, S.QuantityLit, S.StringLit, S.VectorLiteral,
+                             S.MatrixLiteral, S.ListLiteral))
+
+
 class Parser:
     def __init__(self, source: Source):
         self.source = source
         self.toks = tokenize(source)
         self.i = 0
-        self.depth = 0  # >0 inside ( ): newlines are then ignored
+        self.depth = 0  # >0 inside ( ) or < >: newlines are then ignored
         self.last_end = 0
         self._count = None  # the n of a counted selection M[:, j:j+n]
+        self.vector_depth = 0  # >0 inside <...>: its '>' closes a vector instead of comparing
 
     # ---- token access ----------------------------------------------------------------------
     def _index(self, k: int = 0) -> int:
@@ -49,6 +56,10 @@ class Parser:
 
     def peek(self, k: int = 0) -> Token:
         return self.toks[self._index(k)]
+
+    def peek_raw(self, k: int = 0) -> Token:
+        """Look ahead token by token, so a lookahead can see where a line ends."""
+        return self.toks[min(self.i + k, len(self.toks) - 1)]
 
     def next(self) -> Token:
         idx = self._index(0)
@@ -86,7 +97,15 @@ class Parser:
         return f"'{tok.text}'"
 
     def fail(self, message: str, where, hint: Optional[str] = None):
-        span = where if isinstance(where, Span) else Span(self.source, where.start, max(where.end, where.start + 1))
+        """Report a syntax error at a token, a node's span, or the end of the last token read."""
+        if isinstance(where, Span):
+            span = where
+        elif hasattr(where, "span") and isinstance(where.span, Span):
+            span = where.span
+        elif hasattr(where, "start"):
+            span = Span(self.source, where.start, max(where.end, where.start + 1))
+        else:
+            span = Span(self.source, self.last_end, max(self.last_end + 1, self.last_end))
         raise ForgeSyntaxError(message, span, hint=hint)
 
     def expect_op(self, text: str, message: Optional[str] = None, hint: Optional[str] = None) -> Token:
@@ -305,6 +324,9 @@ class Parser:
         self.next()  # '='
         self.skip_nl()
         expr = self.expression()
+        if isinstance(expr, S.StringLit):
+            self.fail("Text cannot be assigned to a variable", expr,
+                      'Text is used in print and equation metadata, not stored: write print "hi".')
         return S.Assign(name.text, expr, self.span_from(name.start))
 
     def import_stmt(self):
@@ -694,6 +716,8 @@ class Parser:
             return S.Binary("<=" if self.toks[self.i - 2].text == "<" else ">=", left, right,
                             self._join(left, right))
         op = self.peek()
+        if op.kind == "op" and op.text == ">" and self.vector_depth:
+            return left  # the '>' that closes <1, 2>, not a comparison
         if (op.kind == "op" and op.text in self._COMPARISONS) or self.is_word(op, "in"):
             self.next()
             self.skip_nl()
@@ -702,20 +726,63 @@ class Parser:
         return left
 
     def expression_body(self):
-        left = self.term()
+        if self.is_op("<") and self.vector_starts_here():
+            left = self.vector_operand()  # the expression begins with a vector operand
+        else:
+            left = self.term()
         while self.is_op("+") or self.is_op("-"):
             op = self.next()
             self.skip_nl()
-            right = self.term()
+            right = self.vector_operand() if self.is_op("<") else self.term()
             left = S.Binary(op.text, left, right, self._join(left, right))
         return left
+
+    def vector_operand(self):
+        """A vector literal that may be followed by its own * and / factors: `<1, 2> * A`."""
+        node = self.vector_literal("<", ">")
+        while self.is_op("*") or self.is_op("/"):
+            op = self.next()
+            self.skip_nl()
+            right = self.vector_operand() if self.is_op("<") else self.unary()
+            node = S.Binary(op.text, node, right, self._join(node, right))
+        return node
+
+    def vector_starts_here(self) -> bool:
+        """Does the '<' at the cursor open a vector operand, as in `v + <1, 2>`?
+
+        A comparison `a < b` follows a value; a vector begins where an operand may begin, so it
+        is the first thing on its line or it follows an operator such as `+`, `-`, `(` or `,`.
+        A `>` at its own level, or a comma, must appear later on the same statement.
+        """
+        if self.i > 0:
+            before = self.toks[self.i - 1]
+            if not (before.kind in ("nl", "op") and (before.kind == "nl" or before.text in ("=", "+", "-", "(", "[", ",", ";", "{", "}", "->"))):
+                return False
+        depth = 0
+        k = 1
+        while True:
+            t = self.peek_raw(k)
+            if t.kind == "eof":
+                return False
+            if t.kind == "op":
+                if t.text in ("(", "["):
+                    depth += 1
+                elif t.text in (")", "]"):
+                    depth -= 1
+                elif t.text == ">" and depth == 0:
+                    return True
+                elif t.text == "," and depth == 0:
+                    return True
+                elif t.text in ("=", "==", "!=", "<=", ">=", ";", "{", "}", "->") and depth == 0:
+                    return False
+            k += 1
 
     def term(self):
         left = self.unary()
         while self.is_op("*") or self.is_op("/"):
             op = self.next()
             self.skip_nl()
-            right = self.unary()
+            right = self.vector_literal("<", ">") if self.is_op("<") else self.unary()
             text = op.text
             if self.is_op("."):  # `.*` and `./` element-by-element (MATLAB style; `*` already is)
                 self.next()
@@ -767,7 +834,7 @@ class Parser:
                 self.next()
                 node = S.Binary("^", node, S.Number(float(t.value), Span(self.source, t.start, t.end)),
                                 Span(self.source, node.span.start, t.end))
-            elif t.kind == "op" and t.text == "[":
+            elif t.kind == "op" and t.text == "[" and not is_literal(node):
                 self.next()
                 self.depth += 1
                 try:
@@ -802,6 +869,11 @@ class Parser:
 
     def primary(self):
         t = self.peek()
+        if t.kind == "nl" and self.i > 0:
+            previous = self.toks[self.i - 1]
+            if previous.kind == "op" and previous.text in ("=", "+", "-", "*", "/", "^", ",", "("):
+                self.next()  # `A =` at the end of a line: the value starts on the next line
+                t = self.peek()
         if t.kind == "num":
             return self.number_or_quantity()
         if t.kind == "ident" and t.text in ("true", "false", "i", "and", "or", "not"):
@@ -833,50 +905,68 @@ class Parser:
         self.fail(f"Expected a value but found {self.describe(t)}", t)
 
     def vector_literal(self, opening: str, closing: str, allow_trailing: bool = False):
-        start = self.expect_op(opening).start
-        self.depth += 1
+        start = self.expect_op(opening).start  # read the '<' before raising the depth below
+        self.depth += 1  # the first value may start on the next line
+        if opening == "<":
+            self.vector_depth += 1  # its own '>' closes the vector instead of comparing
         if opening == "<" and self.is_op(">"):  # <> is the empty vector
             empty = self.next()
             self.depth -= 1
+            self.vector_depth -= 1
             return S.VectorLiteral((), Span(self.source, start, empty.end))
         items = []
         if self.is_op(closing):
             self.fail("A vector must contain at least one value", self.peek())
         while True:
-            if allow_trailing and self.is_op(closing):
+            here = self.toks[self.i]  # a matrix row ends at the end of its line, so read it raw
+            if here.kind == "op" and here.text == closing:
                 break
             items.append(self.expression())
             if self.is_op(","):
                 self.next()
+                if allow_trailing and self.toks[self.i].kind == "nl":
+                    continue  # the row ends its line: the matrix loop reads the next row
                 continue
             break
         self.expect_op(closing, f"Expected ',' or '{closing}' in this vector")
         self.depth -= 1
+        if opening == "<":
+            self.vector_depth -= 1
         return S.VectorLiteral(tuple(items), Span(self.source, start, self.last_end))
 
     def bracket_literal(self):
         """[rows of values] is a matrix; [a, b, c] joins vectors into one."""
-        start = self.expect_op("[").start
+        start = self.expect_op("[").start  # read before raising depth: this '[' may sit alone
         self.depth += 1
+        while self.toks[self.i].kind == "nl":
+            self.i += 1  # the first row may start on the next line
         if self.is_op("]"):
             self.fail("A matrix or list must contain at least one value", self.peek())
         items: List[object] = []
         if self.is_op("["):
             rows = []
             while True:
+                if self.is_op("]"):
+                    break  # the matrix is complete after its last row
                 if not self.is_op("["):
                     self.fail("Expected a row such as '[1, 2]' in this matrix", self.peek())
                 row = self.vector_literal("[", "]", allow_trailing=True)
                 rows.append(row.items)
-                if self.is_op(","):
-                    self.next()
-                    if self.is_op("]"):
-                        break
+                # A row ends at a comma, at the closing ']', or at the end of its line.  Inside a
+                # bracket peek() steps over newlines, so read the neighbouring tokens directly.
+                here = self.toks[self.i]
+                if here.kind == "op" and here.text == ",":
+                    self.next()  # a comma separates rows: [row], [row]
+                    while self.toks[self.i].kind == "nl" or (
+                            self.toks[self.i].kind == "op" and self.toks[self.i].text == ","):
+                        self.i += 1  # a trailing comma, then the next row on the following line
                     continue
-                if self.is_op("]"):
-                    break
-                if not self.is_op("["):
-                    self.fail("Expected another matrix row or ']' to close the matrix", self.peek())
+                while self.toks[self.i].kind == "nl":
+                    self.i += 1  # the row's line ended; the next row starts on the following line
+                nxt = self.toks[self.i]
+                if nxt.kind == "op" and nxt.text in (",", "]", "["):
+                    continue  # the next row, or the ']' that ends the matrix
+                self.fail("Expected another matrix row or ']' to close the matrix", nxt)
             widths = {len(row) for row in rows if row}
             if len(widths) != 1:
                 self.fail("All matrix rows must have the same number of values",
@@ -926,13 +1016,20 @@ class Parser:
 
     def call(self, name_tok: Token):
         self.next()  # '('
-        self.depth += 1
+        self.depth += 1  # its arguments may wrap onto the following lines
+        while self.toks[self.i].kind == "nl" and self.depth > 0:
+            self.i += 1
         args: List[object] = []
         kwargs: List[Tuple[str, object, Optional[Span]]] = []
         try:
-            while not self.is_op(")"):
+            while True:
+                while self.peek().kind == "nl":
+                    self.next()  # each argument may sit on its own line
+                if self.is_op(")"):
+                    break
                 t = self.peek()
-                if t.kind == "ident" and self.is_op("=", 1) and t.text not in KEYWORDS:
+                follow = self.peek_raw(1)  # the next token on this line, not one across a newline
+                if t.kind == "ident" and follow.kind == "op" and follow.text == "=" and t.text not in KEYWORDS:
                     self.next()
                     self.next()
                     kwargs.append((t.text, self.expression(), Span(self.source, t.start, t.end)))
@@ -940,9 +1037,13 @@ class Parser:
                     if kwargs:
                         self.fail("Positional values must come before named ones", t)
                     args.append(self.expression())
-                if not self.is_op(","):
+                if self.is_op(","):
+                    self.next()
+                    continue
+                while self.peek().kind == "nl":
+                    self.next()  # the ')' may follow on the next line
+                if not self.is_op(")"):
                     break
-                self.next()
             self.expect_op(")", "Expected ',' or ')' in this call")
         finally:
             self.depth -= 1

@@ -111,7 +111,7 @@ def run_shell(interp: Interpreter, input_fn: Callable[[str], str] = input,
     buf: List[str] = []
     while True:
         try:
-            line = input_fn("forge> " if not buf else "  ... ")
+            line = input_fn("forge> " if not buf else "  ... ").lstrip("\ufeff")
         except EOFError:
             break
         except KeyboardInterrupt:

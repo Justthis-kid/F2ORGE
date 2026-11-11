@@ -19,7 +19,7 @@ import math
 from fractions import Fraction
 from typing import Optional, Union
 
-from .dimensions import DIMLESS, Dim, describe_full
+from .dimensions import ANGLE, DIMLESS, Dim, describe_full
 from .errors import ForgeEvalError, UnitError
 from .units import KELVIN, Unit
 
@@ -196,6 +196,8 @@ class Quantity:
             return f"{number} {text}" if text else number
         if self.dim.is_dimensionless:
             return format_value(self.value)
+        if self.dim == ANGLE and not isinstance(self.value, complex):
+            return format_value(self.value)  # a bare radian value: radians are the natural measure
         return f"{format_value(self.value)} {Unit.from_dim(self.dim).symbol()}"
 
     def __repr__(self) -> str:

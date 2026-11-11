@@ -66,7 +66,8 @@ resistance = 4.7 kohm
   With spaces they are ordinary operators: `10 m / 2 s` means (10 m) / (2 s).
 * A bare number is dimensionless. `2 * x` multiplies; `2 x` is an error (it would be read as a unit).
 * SI prefixes work on most units: `km`, `mm`, `MPa`, `kN`, `uF` (or `µF`). `forge units` lists everything.
-* Angles: `deg` and `rad` are dimensionless, so `sin(30 deg)` works and `sin(30)` means 30 radians.
+* Angles: `deg` and `rad` are their own dimension, so `sin(30 deg)` works and `sin(30)` means 30 radians;
+  `rad/s` is an angular velocity while `1/s` is a frequency.
 * Temperatures: `degC` and `degF` are *scales* (25 degC = 298.15 K). Subtracting two of them gives a
   difference in `K`; adding two absolute temperatures is an error; inside compound units
   (`W/(m*degC)`) they mean a temperature *difference*.
@@ -114,6 +115,26 @@ transpose(A)
 inverse(A)
 A * v
 ```
+
+Inside parentheses and brackets a newline is insignificant, so calls, vectors, and matrices may span
+several lines; a vector or matrix may also begin on the line after its `=`:
+
+```
+A = [
+  [1, 2]
+  [3, 4]
+]
+force = Force(
+  m = 150 kg,
+  a = 9.81 m/s^2
+)
+v = <1, 2, 3>
+w = v + <3, 2, 1>        # a '<' after an operator starts a vector
+isFast = w > <0, 0, 0>   # compare values with <, <=, >, >=, ==, !=
+```
+
+A statement ends at the end of its line unless it is incomplete: a line ending in an operator, or a
+block header such as `for k in 1..3`, continues on the next line.
 
 Vectors support addition/subtraction, scalar multiplication/division, and dot products. Matrices
 support addition/subtraction, scalar multiplication/division, matrix multiplication, matrix-vector

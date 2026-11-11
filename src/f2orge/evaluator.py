@@ -29,7 +29,7 @@ from .linear_algebra import (
 from .mathlib import adaptive_simpson, bisect, golden
 from .quantity import Quantity
 from .text import Text, as_text
-from .units import lookup_unit
+from .units import lookup_unit, unit_named
 
 Scalar = Union[Quantity, Text]
 
@@ -409,7 +409,7 @@ class Evaluator:
         if eq is None:
             tip = _suggest(node.func, list(ARITY) + list(self.equation_names()) + list(self.function_names())) \
                 or self.import_hint(node.func)
-            raise ForgeNameError(f"'{node.func}' is not a function, function definition, or equation",
+            raise ForgeNameError(f"'{node.func}' is not a function or an equation",
                                  node.func_span or node.span, hint=tip)
         if node.args:
             raise ForgeSyntaxError(
@@ -710,7 +710,7 @@ def _apply(name: str, args: List[object]):
         q = _scalar_in(args[0], "db")
         if q.value <= 0:
             raise ForgeEvalError("db() needs a positive number")
-        return Quantity(10 * math.log10(q.value), lookup_unit("dB").dim, lookup_unit("dB"))
+        return Quantity(10 * math.log10(q.value), lookup_unit("dB").dim, unit_named("dB"))
     if name == "undb":
         q = args[0]
         if not isinstance(q, Quantity) or q.dim != lookup_unit("dB").dim:
@@ -722,7 +722,7 @@ def _apply(name: str, args: List[object]):
             raise UnitError("dbm() needs a power in watts, such as 5 mW; divide by 1 W if needed")
         if q.value <= 0:
             raise ForgeEvalError("dbm() needs a positive power")
-        return Quantity(10 * math.log10(q.value / 1e-3), lookup_unit("dB").dim, lookup_unit("dB"))
+        return Quantity(10 * math.log10(q.value / 1e-3), lookup_unit("dB").dim, unit_named("dB"))
     if name in ("pH", "fromPH"):
         if name == "pH":
             q = _scalar_in(args[0], "pH")
@@ -792,15 +792,15 @@ def _apply(name: str, args: List[object]):
             if not -1.0 <= x <= 1.0:
                 raise ForgeEvalError(f"{name}() needs a value between -1 and 1, found {x:g}")
             result = math.asin(x) if name == "asin" else math.acos(x)
-            return Quantity(result, ANGLE, lookup_unit("rad"))
+            return Quantity(result, ANGLE)
         if name == "atan":
-            return Quantity(math.atan(_dimless(scalars[0], name)), ANGLE, lookup_unit("rad"))
+            return Quantity(math.atan(_dimless(scalars[0], name)), ANGLE)
         if name == "atan2":
             y, x = scalars
             if y.dim != x.dim:
                 raise UnitError(f"atan2() needs two values of the same kind, found {describe_full(y.dim)} "
                                 f"and {describe_full(x.dim)}")
-            return Quantity(math.atan2(y.value, x.value), ANGLE, lookup_unit("rad"))
+            return Quantity(math.atan2(y.value, x.value), ANGLE)
         if name == "exp":
             return Quantity(cmath.exp(complex(scalars[0].value)) if scalars[0].is_complex
                             else math.exp(_dimless(scalars[0], name)))
@@ -919,5 +919,5 @@ def _complex_part(name: str, q: Quantity) -> object:
     if name == "arg":
         if value == 0:
             raise ForgeEvalError("arg() of zero has no phase angle")
-        return Quantity(cmath.phase(value), ANGLE, lookup_unit("rad"))
+        return Quantity(cmath.phase(value), ANGLE)
     return Quantity(complex(value.real, -value.imag), q.dim)

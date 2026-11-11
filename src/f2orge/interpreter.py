@@ -15,6 +15,7 @@ from typing import Callable, Dict, List, Optional, Tuple
 from . import syntax as S
 from .equation import Equation
 from .errors import ForgeError, ForgeImportError, ForgeNameError, Source, UnitError
+from .dimensions import describe_full
 from .evaluator import Evaluator, Scope
 from .linear_algebra import Matrix, Value, Vector
 from .parser import parse
@@ -250,12 +251,12 @@ class Interpreter:
         elif isinstance(st, S.ExprStmt):
             value = self.evaluator.eval(st.expr, self.scope())
             self.variables["ans"] = value
-            self.out(str(value))
+            self.out(display(value))
         elif isinstance(st, S.Print):
             parts: List[str] = []
             for item in st.items:
                 parts.append(item.value if isinstance(item, S.StringLit)
-                             else str(self.evaluator.eval(item, self.scope())))
+                             else display(self.evaluator.eval(item, self.scope())))
             self.out(" ".join(parts))
         elif isinstance(st, S.Plot):
             self._plot(st)
@@ -640,10 +641,28 @@ def _label(value, name: Optional[str]) -> str:
     return name
 
 
+def display(value) -> str:
+    """The printed form of a value: booleans read true/false, as they are written in source."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    return str(value)
+
+
 def _numeric(value, what: str) -> list:
+    """A vector whose values are numbers of one kind: two units on the same axis make no chart."""
     if not isinstance(value, Vector) or any(not isinstance(item, Quantity) for item in value.items):
-        raise ForgeError(f"{what} must be a numeric vector", title="Cannot plot")
+        raise ForgeError(f"{what} needs a vector of numbers", title="Cannot plot")
+    dimensions = {item.dim for item in value.items}
+    if len(dimensions) > 1:
+        raise ForgeError(f"{what} must have matching units, found {sorted_dimensions(dimensions)}",
+                         title="Cannot plot")
+    if len(value.items) < 2:
+        raise ForgeError(f"{what} needs at least two points", title="Cannot plot")
     return [item for item in value.items]
+
+
+def sorted_dimensions(dimensions) -> str:
+    return " and ".join(sorted(describe_full(dim) for dim in dimensions))
 
 
 def _series(y_value, x_value, y_name: Optional[str], x_name: Optional[str], span=None):

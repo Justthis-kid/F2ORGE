@@ -171,6 +171,13 @@ def lookup_unit(name: str) -> Optional[UnitDef]:
     return None
 
 
+def unit_named(name: str) -> Optional["Unit"]:
+    """The writable Unit for a unit name (with its atoms), or None when it is not a unit."""
+    if lookup_unit(name) is None:
+        return None
+    return Unit.from_atoms([(name, Fraction(1))])
+
+
 def all_unit_names() -> List[str]:
     return sorted(set(_BASE) | set(_ALIAS))
 

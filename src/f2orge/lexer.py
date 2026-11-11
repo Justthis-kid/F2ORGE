@@ -22,7 +22,7 @@ _WORD_EXTRA = "_µΩ°"
 KEYWORDS = {
     "eq", "import", "export", "solve", "convert", "print", "for", "plot",
     "worksheet", "input", "output", "graph", "over", "from", "to",
-    "if", "elseif", "else", "while", "def", "return", "break", "continue",
+    "if", "elseif", "else", "while", "def", "fn", "return", "break", "continue",
     # 'in', 'and', 'or', 'not', 'true', 'false', and 'i' are ordinary words: they are only
     # keywords where a grammar position makes them so (for k in ..., 2 in v, a and b).
 }
@@ -117,6 +117,9 @@ def tokenize(source: Source) -> List[Token]:
             toks.append(Token("super", text[i:j], i, j, int(text[i:j].translate(_SUPER_TO_ASCII))))
             i = j
 
+        elif ch + text[i + 1 : i + 2] == "->":  # must win over '>' followed by '-'
+            toks.append(Token("op", "->", i, i + 2))
+            i += 2
         elif ch in "!<>=." and text[i + 1 : i + 2] == "=" and (ch != "." or text[i + 2 : i + 3] != "="):
             pair = ch + "="  # != <= >= == (the last so code can also be written with ==)
             toks.append(Token("op", pair, i, i + 2))
