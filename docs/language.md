@@ -21,13 +21,64 @@ Blank lines and `#` or `//` comments are ignored. Names are case-sensitive.
 | `eq Name { ... }` | Define a reusable equation. |
 | `worksheet Name { ... }` | Define unit-checked inputs, calculated outputs, and optional graph sweeps for the IDE. |
 | `solve Name for variable { given = value }` | Solve an equation for one unknown from known values. |
+| `solve A, B for x, y { ... }` | Solve several equations for several unknowns at once. |
 | `import Name` / `import ./path/File.eq` | Load an equation by library/project name or file path. |
 | `export Name` | Write a defined equation to a `.eq` file. |
 
-F²ORGE does not currently have general-purpose `if`, `for`, or `while` statements, functions defined
-by the user, or string interpolation. The word `for` is part of `solve ... for ...`, not a loop.
+F²ORGE has general-purpose `if`/`elseif`/`else`, `for`, and `while` statements and user-defined
+functions (`def`, also spelled `fn`). String interpolation is not supported; text is a value used
+inside statements, such as `print` or `x = "hi"`.
 
-## Native engineering worksheets
+## Control flow and functions
+
+Blocks use braces and may span several lines. Conditions use `and`, `or`, `not` and the comparisons
+`< <= > >= == !=`; a number is true when it is nonzero, and comparing quantities of different kinds
+is a unit error.
+
+```
+for k in 1..5 {
+    print k, "squared is", k^2
+}
+
+n = 0
+while n < 3 {
+    n = n + 1
+    if n == 2 {
+        continue
+    }
+}
+
+if speed > 20 m/s {
+    print "fast"
+} elseif speed > 10 m/s {
+    print "cruising"
+} else {
+    print "slow"
+}
+```
+
+`for` walks a range (`1..10`, `1..10..2` for a step, or the MATLAB-style `for k = 1..10`), a vector,
+the rows of a matrix, or the characters of text. `break` leaves the loop and `continue` starts the
+next pass. Loops stop with an error after a million passes so a runaway loop cannot hang a session.
+
+Functions are declared with `def` (or `fn`) and return a value with `return`:
+
+```
+def area(r) {
+    return pi * r^2
+}
+
+area(2 m)                 # 12.56637061 m²
+
+def gain(v, ref = 1 m/s) {
+    return 20 * log(v / ref)
+}
+```
+
+Parameters are positional; only the last may have a default. A function sees its own parameters
+first and the session's variables second, and calling it does not change those variables. Functions
+may call themselves (up to a recursion limit) and can be passed to `integrate`, `derivative`,
+`fzero`, `minimize`, and `surface`.
 
 A worksheet is a first-class Forge declaration, not a series of steps in a UI wizard. The `.forge`
 source is authoritative; the offline IDE renders the declared controls and recalculates them when
@@ -87,19 +138,40 @@ Multiplying or dividing two quantities gives simplified SI, using a named unit w
 (`-2^2` is -4, `2^3^2` is 512). Unicode `× · ÷ − →` and superscripts (`x²`) are accepted.
 
 Functions: `sin cos tan asin acos atan atan2 exp ln log sqrt abs min max`.
-`log` is base 10. `sqrt(16 m^2)` is `4 m`. Trig and log arguments must be dimensionless.
-`inverse` and `transpose` operate on matrices.
+`log` is base 10. `sqrt(16 m^2)` is `4 m`, and the square root of a negative quantity is imaginary
+(`sqrt(-1)` is `i`). Trig functions take an angle or a plain number of radians; logs need a plain
+number.
 
 | Function | Inputs and result |
 |---|---|
-| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions; `x` is dimensionless (use `deg` or `rad` for angles). |
-| `asin(x)`, `acos(x)`, `atan(x)` | Inverse trigonometric functions; input and result are dimensionless angles in radians. |
-| `atan2(y, x)` | Two-argument angle function; arguments must be dimensionless. |
-| `exp(x)`, `ln(x)`, `log(x)` | Exponential, natural log, base-10 log; argument must be dimensionless. |
-| `sqrt(x)` | Square root; unit exponents are halved and must remain representable. |
-| `abs(x)` | Absolute magnitude of a scalar quantity. |
-| `min(a, b, ...)`, `max(a, b, ...)` | Select the smallest/largest compatible scalar quantity; at least two arguments. |
-| `transpose(A)`, `inverse(A)` | Matrix operations; inverse requires a square, dimensionless matrix. |
+| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions; `x` is an angle (`deg`, `rad`, `rev`) or a plain number of radians. |
+| `asin(x)`, `acos(x)`, `atan(x)` | Inverse trigonometric functions; the result is an angle, shown in radians. |
+| `atan2(y, x)` | Two-argument angle; both values must have matching units, and the result is an angle. |
+| `exp(x)`, `ln(x)`, `log(x)`, `log2(x)`, `log(x, base)` | Exponential, natural, base-10, base-2, and general logs; the argument must be a plain number. |
+| `sqrt(x)`, `cbrt(x)` | Roots; unit exponents are halved or thirds and must remain representable. |
+| `abs(x)`, `sign(x)`, `floor(x)`, `ceil(x)`, `round(x, digits)` | Magnitude and rounding of a plain number. |
+| `min(a, b, ...)`, `max(a, b, ...)`, `clamp(x, low, high)` | Select or bound compatible scalar quantities. |
+| `cross(a, b)` | Cross product of two length-3 vectors: torque, magnetic force, angular momentum. |
+| `transpose(A)`, `inverse(A)`, `det(A)` | Matrix operations; `inverse` needs a square matrix whose units factor into row and column dimensions. |
+| `solve_system(A, b)` | Solve `A x = b` for a square matrix of coefficients and a vector of right-hand sides. |
+| `sum(v)`, `mean(v)`, `median(v)`, `std(v)`, `pstd(v)`, `var(v)`, `pvar(v)` | Summary statistics; `std`/`var` are the sample forms and `pstd`/`pvar` the population forms. |
+| `percentile(v, p)` | The p-th percentile; `p` is a fraction (0 to 1) or a percentage (0 to 100). |
+| `linreg(x, y)` | Least-squares fit: returns `<slope, intercept, R²>`. |
+| `cumsum(v)`, `diff(v)`, `normalize(v)` | Running total, successive differences, and a vector scaled to sum to 1. |
+| `count(v)`, `size(v)`, `sort(v, "asc"\|"desc")`, `select(v, indices)` | Length, shape, ordering, and positional selection. |
+| `reshape(v, rows, columns)`, `concat(a, b)`, `linspace(a, b, n)`, `logspace(a, b, n)`, `range(a, b, step)` | Build and reshape vectors. |
+| `integrate(f, a, b)`, `derivative(f, x)` | Definite integral and numeric derivative of a function or a bare expression such as `x^2`. |
+| `diff(x^2)` | Symbolic derivative, returned as text: `diff(x * sin(x))` is `sin(x) + x * cos(x)`. |
+| `trapz(y)`, `trapz(x, y)` | Trapezoidal integral of sampled data, with the units of x times y. |
+| `limit(x^2, 2)`, `limit(sin(x)/x, 0)` | The value an expression approaches; 0/0 shapes are resolved with l'Hôpital's rule. |
+| `dsolve(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)` and return `<times, values>`; adaptive Dormand-Prince 5. |
+| `fzero(f, a, b)`, `minimize(f, a, b)` | A root inside a bracket, and the minimum (returns `<x, f(x)>`). |
+| `roots(<c, b, a>)` | Real roots of `c + b x + a x² + ...`, from the constant term upward. |
+| `surface(f, xs, ys)` | Sample `f(x, y)` over a grid into a matrix for `plot(..., kind = "surface")`. |
+| `db(x)`, `undb(level)`, `dbm(power)` | Decibel ratios, the inverse of `db`, and a power level in dBm above 1 mW. |
+| `pH(concentration)`, `fromPH(level)` | `-log10` of a concentration, and the concentration for a pH. |
+| `real(z)`, `imag(z)`, `conj(z)`, `arg(z)`, `mag(z)` | Parts, conjugate, phase, and magnitude of a complex quantity. |
+| `format(...)`, `text(x)`, `upper(t)`, `lower(t)`, `char(code)`, `ascii(t)` | Build and inspect text. |
 
 ### Vectors and matrices
 
@@ -138,9 +210,52 @@ block header such as `for k in 1..3`, continues on the next line.
 
 Vectors support addition/subtraction, scalar multiplication/division, and dot products. Matrices
 support addition/subtraction, scalar multiplication/division, matrix multiplication, matrix-vector
-products, transpose, and inverse. Element operations preserve unit checking. Inverse currently
-requires a square, dimensionless matrix. Matrices and vectors are program values, not equation
-outputs or solver relations.
+products, transpose (`M.T` or `transpose(M)`), inverse, and determinant. Element operations preserve
+unit checking. Matrices and vectors are program values, not equation outputs or solver relations.
+
+### Indexing and slicing
+
+Indices are **zero-based**. `v[i]` is one element, `M[i]` one row, and `M[i, j]` one cell. A `:`
+selects everything along an axis and `j:j+n` a run of n values:
+
+```
+v = <10, 20, 30>
+v[1]              # 20
+v[0:2]            # <10, 20>
+M = [[1, 2], [3, 4]]
+M[:, 0]           # [[1], [3]]   every row, first column
+M[0:2, 0]         # [[1], [3]]   two rows counted from row 0, first column
+```
+
+### Complex numbers
+
+Use `i` for the imaginary unit. Complex quantities keep their units, which is what AC impedance
+work needs:
+
+```
+Z = 3 ohm + 4i ohm
+abs(Z)            # 5 Ω
+arg(Z)            # 0.927295218 rad
+conj(Z)           # 3 Ω - 4i Ω
+Z * 2 A           # 6 V + 8i V
+sqrt(-1)          # i
+```
+
+`real`, `imag`, `conj`, `arg`, and `mag` take a complex quantity apart. Complex numbers cannot be
+ordered with `<` or `>`; compare magnitudes with `abs()` instead.
+
+### Logarithmic and angular units
+
+The unit catalog includes `dB` and `dBm` (logarithmic levels), `rpm`/`rps` (angular velocity),
+`rad`/`deg`/`rev` (angles), and six currencies (`USD EUR GBP JPY CAD AUD`), each with a dimension of
+its own and no exchange rates. Because angles are a dimension, `rad/s` is an angular velocity while
+`1/s` is a frequency:
+
+```
+db(100)                    # 20 dB
+dbm(1 W)                   # 30 dBm
+convert 3000 rpm -> rad/s  # 314.1592654 rad/s
+```
 
 Built-in constants: `pi e g G R` (physics), `speedOfLight kB NA sigmaSB`, and the aerospace pack
 `muEarth rEarth rhoSL pSL TSL`. Your own variables may shadow them.
@@ -207,8 +322,61 @@ solve Force for a {
 3. If the unknown appears twice (`t + t^2 = 6`) it solves numerically, which needs the unknown's unit
    declared (`t : dimensionless`). Positive solutions are preferred; other roots are reported.
 4. If information is missing it says exactly what: `cannot find F from F = m * a: m, a are unknown`.
-5. Numeric solving is not a general simultaneous-system solver. Equations requiring several
-   independent unknowns at once will report what information is missing.
+
+### Simultaneous systems
+
+Name several equations and several unknowns to solve them together:
+
+```
+eq Sum { x + y = s }
+eq Diff { x - y = d }
+solve Sum, Diff for x, y {
+    s = 10 m
+    d = 2 m
+}
+# x = 6 m
+# y = 4 m
+```
+
+One equation for each unknown. Units are inferred from the relations, so `x + y = s` with `s` in
+metres makes both lengths, `x^2 + y^2 = r2` with `r2` in m² makes them lengths, and a product such
+as `I3 * 4 ohm = I2 * 3 ohm` makes both currents. A sum whose size is unknown
+(`I1 - I2 - I3` against a plain `0`) ties its names to one dimension, which another relation then
+settles. Declaring a unit on an unknown (`I1 : A`) overrides the inference and is the clearest way to
+write a circuit; an equation that mixes units and a bare `0` is rejected when it is defined, so write
+`I1 = I2 + I3` rather than `I1 - I2 - I3 = 0`.
+
+```
+eq KCL { I1 : A
+    I2 : A
+    I3 : A
+    I1 = I2 + I3 }
+eq Loop { V : V
+    I1 : A
+    I3 : A
+    R1 : ohm
+    R3 : ohm
+    V = I1 * R1 + I3 * R3 }
+eq Mesh { R2 : ohm
+    I2 : A
+    I3 : A
+    R3 : ohm
+    I3 * R3 = I2 * R2 }
+solve KCL, Loop, Mesh for I1, I2, I3 {
+    V = 6 V
+    R1 = 2 ohm
+    R2 = 3 ohm
+    R3 = 4 ohm
+}
+# I1 = 1.615384615 A
+# I2 = 0.9230769231 A
+# I3 = 0.6923076923 A
+```
+
+Linear and non-linear systems use the same solver: a damped Newton iteration started from one
+coherent unit of each unknown's dimension. `--explain` reports which method ran. The solver refuses
+the cases that have no single answer: too few equations for the unknowns, a dependent system
+(`x + y = s` together with `2*x + 2*y = 2*s`), or an unknown that is also given a value.
 
 ## Files
 
@@ -224,6 +392,61 @@ Bernoulli DeltaV IdealGas Ohm ElectricalPower CapacitorEnergy Lift CircularOrbit
 An `.eq` file may contain only `eq` definitions and `import`s.
 Imports search relative to the importing file and the project, configured equation paths, and the
 bundled standard library. File paths in `import` are relative to the importing file.
+
+### Reading and writing data tables
+
+A program can read a CSV file and analyse it without leaving the language. `readtable()` returns a
+table: a vector whose first value is the headers and whose following values are the columns.
+`csvwrite()` writes that same shape back.
+
+```
+t = readtable("measurements.csv")
+t[0]                      # <time, distance>     the headers
+t[1]                      # <0 s, 1 s, 2 s>     a column, with its units
+distance = t[2]
+mean(distance)            # 3.666666667 m
+linreg(t[1], distance)    # <4 m/s, -0.3333333333 m, 0.9795918367>
+
+csvwrite("reports/summary.csv", t)   # folders are created as needed
+```
+
+* Paths are relative to the program being run, and the folder is created when writing.
+* A header may declare a unit in brackets, `time [s]`. Every cell in that column is read as that
+  quantity, so the column is unit-checked like any other vector. A header without brackets gives
+  plain numbers.
+* A column holding any non-numeric cell becomes a vector of text.
+* Rows must all have the same number of values, and a column cannot mix numbers and text; both are
+  reported with the file and the reason.
+* `forge browser`'s **Charts** tab reads the same `name [unit]` headers, so a file produced by
+  `csvwrite()` opens there directly.
+
+## Differential equations
+
+`dsolve(f, y0, t0, t1)` integrates `dy/dt = f(t, y)` from `t0` to `t1`, starting at `y0`, and
+returns two vectors: the times and the values. Its adaptive Runge-Kutta-Fehlberg step (the family
+behind MATLAB's `ode45`) keeps the error near 1e-7 and produces about 200 samples, so the result
+plots directly.
+
+```forge
+def accel(t, v) { return -9.81 m/s^2 }
+fall = dsolve(accel, 20 m/s, 0 s, 4 s)
+n = count(fall[1])
+fall[1][n - 1]        # -19.24 m/s, the velocity after four seconds
+fall[0][n - 1]        # 4 s
+plot(fall[0], fall[1])
+```
+
+The derivative is a function of time first and the value second, `f(t, y)`. A bare expression works
+too, using `t` and `y`: `dsolve(-9.81 m/s^2, 20 m/s, 0 s, 4 s)`. Units flow through: the value
+carries `y0`'s unit, and the derivative must measure that unit per second, so passing a velocity
+derivative as an acceleration is reported as a unit mismatch rather than silently accepted.
+
+Decay and growth need a rate constant, which is an inverse unit:
+
+```forge
+def dv(t, v) { return -0.5 1/s * v }
+r = dsolve(dv, 10 m/s, 0 s, 2 s)     # 10 e^-t, about 3.6788 m/s at t = 2 s
+```
 
 ## Graph export
 
@@ -355,5 +578,6 @@ and standalone Windows executable output; the desktop extras are required for na
 the build extra is additionally required for an executable. The native and loopback browser IDEs are
 initial implementations; an equation marketplace is not recommended for v1.
 
-Simultaneous equation systems are not solved yet; each `solve` handles one chain of single-unknown
-relations.
+One `solve` handles one equation, or one system of equations: `solve A, B for x, y` names several
+equations and several unknowns and solves them together. Matrix values remain program values, not
+equation outputs or solver relations.

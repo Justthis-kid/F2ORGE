@@ -71,7 +71,22 @@ solve Force for a {
 F²ORGE rearranges the relation and returns `a = 2 m/s²`. `--explain` (`forge run --explain
 first.forge`) shows the rearranged expression. A solve block lists known values; the `for` target is
 the one value to find. If the givens do not determine the target, the diagnostic identifies what is
-missing. This is not a general simultaneous-equations solver.
+missing.
+
+To find several unknowns at once, name several equations and several unknowns:
+
+```forge
+eq Sum { x + y = s }
+eq Diff { x - y = d }
+solve Sum, Diff for x, y {
+    s = 10 m
+    d = 2 m
+}
+```
+
+This returns `x = 6 m` and `y = 4 m`. See the
+[language reference](language.md#simultaneous-systems) for how units are inferred and how the loops
+of a circuit are written.
 
 ## Lesson 5 — Build vectors and matrices
 
@@ -95,6 +110,27 @@ compatible units. Multiplying two vectors computes a dot product; multiplying ma
 and vector) follows the usual dimension rules. `transpose` changes rows and columns. `inverse`
 currently accepts only square, dimensionless matrices; singular matrices cannot be inverted. The
 interpreter reports incompatible shapes or units instead of silently truncating data.
+
+## Lesson 5b — Calculus: slopes, areas, and limits
+
+F²ORGE can differentiate symbolically, integrate sampled data, and take a limit:
+
+```forge
+distance = <0 m, 2 m, 4 m, 6 m>
+force = <2 N, 4 N, 6 N, 8 N>
+trapz(distance, force)       # 30 J, the work done
+trapz(force)                 # 15 N, spaced one unit apart
+
+diff(x^3 + 2*x)              # 3 * x^2 + 2
+limit(sin(x) / x, 0)         # 1
+derivative(x^2, 3)           # 6, a numeric derivative at x = 3
+integrate(x^2, 0 m, 2 m)     # 2.666666667 m³
+```
+
+`trapz(x, y)` is the trapezoidal area under a curve, so its units are the units of x times the
+units of y: distance times force gives joules. `diff()` returns the derivative as text when you give
+it an expression, but still returns neighbouring differences when you give it a vector. `limit()`
+handles the 0/0 shapes a calculus class meets, and says plainly when a limit does not exist.
 
 ## Lesson 6 — Plot an equation sweep
 

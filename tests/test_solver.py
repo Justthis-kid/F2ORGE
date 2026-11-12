@@ -99,7 +99,8 @@ def test_numeric_fallback_requires_a_declared_unit_and_reports_no_solution():
 def test_root_of_even_powers_and_domain_errors():
     out = run("eq S { L : m\n L^2 = 9 m^2 }\nsolve S for L { }")
     assert out[0] == "L = 3 m" and "negative solution" in out[1]
-    assert isinstance(error_of("eq S { y = x^2 }\nsolve S for x { y = -4 }"), ForgeEvalError)
+    out = run("eq S { y = x^2 }\nsolve S for x { y = -4 }")
+    assert out[0].startswith("x = ") and "i" in out[0]  # a negative square gives an imaginary root
 
 
 def test_declared_output_unit_is_applied_to_solutions():
@@ -125,3 +126,58 @@ def test_stdlib_equations_agree_with_hand_calculation():
     assert out[0].startswith("7668.5")
     out = run("import DeltaV\nsolve DeltaV for m0 { Isp = 300 s\n mf = 1 kg\n dv = 3232 m/s }")
     assert out[0].startswith("m0 = 2.99") or out[0].startswith("m0 = 3.0")
+
+
+# ---- simultaneous systems ---------------------------------------------------------------------
+def test_simultaneous_linear_system_is_unit_aware():
+    out = run("""eq Sum { x + y = s }
+eq Diff { x - y = d }
+solve Sum, Diff for x, y {
+    s = 10 m
+    d = 2 m
+}""")
+    assert out == ["x = 6 m", "y = 4 m"]
+
+
+def test_simultaneous_nonlinear_system():
+    out = run("""eq Circle { x^2 + y^2 = r2 }
+eq Line { y = x }
+solve Circle, Line for x, y {
+    r2 = 8 m^2
+}""")
+    assert out == ["x = 2 m", "y = 2 m"]
+
+
+def test_simultaneous_system_handles_kirchhoff_loops():
+    out = run("""eq Loop1 { I1 - I2 - I3 = 0 }
+eq Loop2 { 6 V = I1 * 2 ohm + I3 * 4 ohm }
+eq Loop3 { I3 * 4 ohm = I2 * 3 ohm }
+solve Loop1, Loop2, Loop3 for I1, I2, I3 { }""")
+    assert out[0].startswith("I1 = 1.61538") and out[0].endswith(" A")
+    assert out[1].startswith("I2 = 0.92307") and out[1].endswith(" A")
+    assert out[2].startswith("I3 = 0.69230") and out[2].endswith(" A")
+
+
+def test_simultaneous_system_reports_its_method_and_mistakes():
+    it, out = run_it("""eq Sum { x + y = s }
+eq Diff { x - y = d }
+solve Sum, Diff for x, y { s = 10 m
+ d = 2 m }""")
+    assert out == ["x = 6 m", "y = 4 m"]
+    it.explain = True
+    out = []
+    it.out = out.append
+    it.run("solve Sum, Diff for x, y { s = 12 m\n d = 0 m }", "t.forge")
+    assert "Newton's method" in out[-1]
+
+
+def test_simultaneous_system_rejects_impossible_requests():
+    with pytest.raises(SolveError, match="1 equation"):
+        run("eq Force { F = m * a }\nsolve Force for m, a { F = 100 N }")
+    with pytest.raises(SolveError, match="dependent"):
+        run("eq A { x + y = s }\neq B { 2 * x + 2 * y = 2 * s }\nsolve A, B for x, y { s = 10 m }")
+    with pytest.raises(SolveError, match="nothing to solve for"):
+        run("eq Sum { x + y = s }\neq Sum2 { x * 2 = 4 m }\n"
+            "solve Sum, Sum2 for x, y { s = 10 m\n x = 1 m }")
+    assert "No equation has a variable named 'q'" in error_of(
+        "eq Sum { x + y = s }\nsolve Sum, Sum for x, q { s = 10 m }").message

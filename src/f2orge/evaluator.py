@@ -20,18 +20,21 @@ from .constants import BOOLEANS, CONSTANTS
 from .dimensions import ANGLE, DIMLESS, describe_full
 from .errors import ForgeError, ForgeEvalError, ForgeNameError, ForgeSyntaxError, Span, UnitError
 from .linear_algebra import (
-    Element, Matrix, Value, Vector, add as add_linear, ascending_all, cross, cumsum, descending_all,
-    determinant, divide as divide_linear, diff, elementwise, index as index_linear, inverse,
-    linear_regression, make_matrix, make_range, make_vector, mean, median, multiply as multiply_linear,
-    negate, normalize, numeric_items, percentile, select, solve_linear, standard_deviation, subtract as subtract_linear,
-    transpose, variance,
+    ALL as _ALL, Element, Matrix, Value, Vector, add as add_linear, ascending_all, cross, cumsum,
+    descending_all, determinant, divide as divide_linear, diff, elementwise, index as index_linear,
+    inverse, linear_regression, make_matrix, make_range, make_vector, mean, median,
+    multiply as multiply_linear, negate, normalize, numeric_items, percentile, same_units, select,
+    solve_linear, standard_deviation, subtract as subtract_linear, transpose, variance,
 )
 from .mathlib import adaptive_simpson, bisect, golden
-from .quantity import Quantity
+from .printer import format_expr
+from .quantity import Quantity, format_number
 from .text import Text, as_text
-from .units import lookup_unit, unit_named
+from .units import lookup_unit, unit_named, Unit
 
 Scalar = Union[Quantity, Text]
+
+MOLAR = Unit.from_atoms([("mol", Fraction(1)), ("L", Fraction(-1))])  # the unit pH is defined on
 
 
 class UndefinedVariable(ForgeNameError):
@@ -84,6 +87,28 @@ class FunctionReference:
         return f"FunctionReference({self.name})"
 
 
+class GridFunction:
+    """`surface(x*y, xs, ys)`: an expression of two axis variables, sampled over a grid."""
+
+    __slots__ = ("expression", "evaluator", "scope", "names")
+
+    def __init__(self, expression, evaluator: "Evaluator", scope: Scope, names):
+        self.expression = expression
+        self.evaluator = evaluator
+        self.scope = scope
+        self.names = list(names)
+
+    def call(self, first, second) -> object:
+        values = dict(self.scope.values)
+        values[self.names[0]] = first
+        values[self.names[1]] = second
+        return self.evaluator.eval(
+            self.expression, Scope(values, self.scope.excluded, self.scope.constants))
+
+    def __str__(self) -> str:
+        return f"function of {self.names[0]} and {self.names[1]}"
+
+
 class PartialFunction:
     """`integrate(x^2, 0, 1)`: an expression of x that behaves like a function of one value."""
 
@@ -119,15 +144,15 @@ ARITY = {
     "inverse": (1, 1), "transpose": (1, 1), "cross": (2, 2), "det": (1, 1), "solve_system": (2, 2),
     "sum": (1, 1), "mean": (1, 1), "std": (1, 1), "pstd": (1, 1), "var": (1, 1), "pvar": (1, 1),
     "median": (1, 1), "percentile": (2, 2), "linreg": (2, 2), "count": (1, 1),
-    "cumsum": (1, 1), "normalize": (1, 1), "diff": (1, 1),
+    "cumsum": (1, 1), "normalize": (1, 1), "diff": (1, 1), "trapz": (1, 3),
     "floor": (1, 1), "ceil": (1, 1), "round": (1, 2), "sign": (1, 1),
     "linspace": (3, 3), "logspace": (2, 3), "range": (1, 3), "sort": (1, 2), "select": (2, 2),
     "concat": (1, 99), "size": (1, 1), "reshape": (3, 3),
     "db": (1, 1), "undb": (1, 1), "dbm": (1, 1), "pH": (1, 1), "fromPH": (1, 1),
     "real": (1, 1), "imag": (1, 1), "conj": (1, 1), "arg": (1, 1), "mag": (1, 1),
     "format": (1, 99), "text": (1, 1), "char": (1, 1), "ascii": (1, 1), "upper": (1, 1), "lower": (1, 1),
-    "integrate": (2, 4), "derivative": (2, 2), "roots": (1, 1), "fzero": (2, 2), "minimize": (2, 2),
-    "surface": (3, 3),
+    "integrate": (2, 4), "derivative": (2, 2), "roots": (1, 1), "fzero": (2, 3), "minimize": (2, 3),
+    "surface": (3, 3), "readtable": (1, 1), "csvwrite": (2, 2), "limit": (2, 2), "dsolve": (4, 4),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -148,6 +173,7 @@ class Evaluator:
         self.lookup_function: Callable[[str], Optional[object]] = lambda _name: None
         self.function_names: Callable[[], List[str]] = lambda: []
         self.interpreter: Optional[object] = None  # set by the Interpreter; runs user functions
+        self.file_io: Callable[[str, list, object], object] = _no_file_io
 
     # ---- entry point -----------------------------------------------------------------------
     def eval(self, node, scope: Scope):
@@ -196,15 +222,25 @@ class Evaluator:
         if isinstance(node, S.Index):
             count = self.eval(node.count, scope) if node.count is not None else None
             target = self.eval(node.obj, scope)
-            indices = [self.eval(item, scope) for item in node.indices]
+            indices = [
+                _ALL if isinstance(item, S.Name) and item.name == ":" else self.eval(item, scope)
+                for item in node.indices
+            ]
             if count is None and not any(isinstance(item, S.Name) and item.name == ":" for item in node.indices) \
                     and not any(isinstance(item, S.Binary) and item.op == ":" for item in node.indices):
                 return index_linear(target, indices)
             results = select(target, indices, count)
-            if len(results) != 1:
-                raise ForgeEvalError("a selection such as M[i, j] must pick one value", node.span,
-                                     hint="Use M[i] for a row, or M[:, j:j+n] for several values.")
-            return results[0]
+            if len(results) == 1:
+                return results[0]
+            if count is not None:
+                return results[0]  # M[:, j:j+n] is one block
+            if all(isinstance(item, Vector) for item in results):
+                # M[:, 0] picks one column from every row, which is a matrix of its own.
+                widths = {len(item.items) for item in results}
+                if len(widths) == 1:
+                    return Matrix(tuple(tuple(item.items) for item in results))
+            raise ForgeEvalError("a selection such as M[i, j] must pick one value", node.span,
+                                 hint="Use M[i] for a row, or M[:, j:j+n] for a block.")
         if isinstance(node, S.Member):
             if isinstance(node.obj, S.Call) and node.obj.func not in ARITY:
                 eq, values = self.call_equation(node.obj, scope)
@@ -302,14 +338,15 @@ class Evaluator:
         return values[eq.primary]
 
     def _function_reference(self, function) -> FunctionReference:
-        return FunctionReference(function.name, lambda value, f=function: self._call_user(f, value))
+        return FunctionReference(function.name,
+                                 lambda *values, f=function: self._call_user(f, *values))
 
-    def _call_user(self, function, value: Value) -> Value:
-        return self.interpreter.call_function(function, [value], [], None)  # type: ignore[union-attr]
+    def _call_user(self, function, *values: Value) -> Value:
+        return self.interpreter.call_function(function, list(values), [], None)  # type: ignore[union-attr]
 
-    def as_function(self, value, scope: Scope, span, what: str = "this function"):
+    def as_function(self, value, scope: Scope, span, what: str = "this function", arity: int = 1):
         """A scalar function of one variable: a def function, an equation, or an expression."""
-        if isinstance(value, (FunctionReference, PartialFunction)):
+        if isinstance(value, (FunctionReference, PartialFunction, GridFunction)):
             return value
         if isinstance(value, Text):
             raise ForgeEvalError(f"{what} needs a function such as f, x^2, or an equation name")
@@ -327,11 +364,128 @@ class Evaluator:
             raise ForgeEvalError(f"{what} needs a function such as f, x^2, or an equation name, found {value}")
         raise ForgeEvalError(f"{what} needs a function such as f, x^2, or an equation name")
 
-    def _as_numeric_function(self, value, scope: Scope, span, what: str) -> Callable[[float], float]:
-        function = self.as_function(value, scope, span, what)
+    def two_variable_function(self, node, scope: Scope, xs, ys):
+        """`surface(x*y, xs, ys)`: an expression of two variables over a grid.
 
-        def call(x: float) -> float:
-            result = function.call(Quantity(x))
+        The names it refers to that are not already values become the two axes, x first.
+        """
+        free = [n for n in S.names_in(node) if scope.get(n) is None]
+        names = [free[0]] if free else ["x"]
+        second = free[1] if len(free) > 1 else ("y" if names[0] == "x" else "x")
+        return GridFunction(node, self, scope, (names[0], second))
+
+    def _dsolve(self, node: S.Call, scope: Scope):
+        """dsolve(f, y0, t0, t1): integrate dy/dt = f(t, y), returning <times, values>."""
+        from .ode import integrate
+
+        y0 = self.eval(node.args[1], scope)
+        t0 = self.eval(node.args[2], scope)
+        t1 = self.eval(node.args[3], scope)
+        for value, what in ((y0, "the starting value"), (t0, "the start time"), (t1, "the end time")):
+            if not isinstance(value, Quantity):
+                raise ForgeEvalError(f"dsolve() needs a scalar quantity for {what}", node.span)
+        if t0.dim != t1.dim:
+            raise UnitError("dsolve() start and end times must have the same unit", node.span)
+        if t1.value == t0.value:
+            raise ForgeEvalError("dsolve() needs an end time different from the start time", node.span)
+        derivative = self._derivative_function(node.args[0], scope, node.span)
+        first = derivative(Quantity(t0.value, t0.dim), y0)
+        if not isinstance(first, Quantity):
+            raise ForgeEvalError("dsolve() needs a function that returns a number", node.span)
+        # dy/dt must measure the value per unit of time, or the result cannot have y0's unit.
+        value_dim = first.dim * t0.dim
+        if value_dim != y0.dim:
+            raise UnitError(
+                f"dsolve() needs a derivative in {describe_full(y0.dim)} per {describe_full(t0.dim)}, "
+                f"but it gives {describe_full(first.dim)}", node.span,
+                hint="The derivative is dy/dt: its unit is the value's unit divided by time.")
+
+        def slope(t_: float, y_: float) -> float:
+            out = derivative(Quantity(t_, t0.dim), Quantity(y_, y0.dim))
+            if not isinstance(out, Quantity):
+                raise ForgeEvalError("dsolve() needs a function that returns a number", node.span)
+            return out.value
+
+        times, values = integrate(slope, y0.value, t0.value, t1.value)
+        return Vector((Vector(tuple(Quantity(t, t0.dim, t0.unit) for t in times)),
+                       Vector(tuple(Quantity(v, value_dim, y0.unit) for v in values))))
+
+    def _derivative_function(self, node, scope: Scope, span):
+        """`def f(t, y)`, or a bare expression using t and y, as a function of (t, y)."""
+        if isinstance(node, S.Name) or isinstance(node, S.Call):
+            function = self.eval(node, scope)
+            if hasattr(function, "call"):
+                return function.call
+            raise ForgeEvalError("dsolve() needs a function such as def f(t, y) { ... }", span)
+        names = [n for n in S.names_in(node) if scope.get(n) is None]
+        time_name = "t" if "t" in names else (names[0] if names else "t")
+        value_name = "y" if "y" in names else (names[1] if len(names) > 1 else "y")
+        grid = GridFunction(node, self, scope, (time_name, value_name))
+        return grid.call
+
+    def _limit(self, node: S.Call, scope: Scope):
+        """limit(expression, at): the value an expression approaches.
+
+        A function name is sampled numerically; a bare expression such as `sin(x)/x` is first put
+        into a form l'Hôpital's rule can read, so the common 0/0 cases come out exact.
+        """
+        from . import calculus
+
+        target = node.args[1]
+        point = self.eval(target, scope)
+        if not isinstance(point, Quantity):
+            raise ForgeEvalError("limit() needs a numeric point", node.span)
+        first = node.args[0]
+        if isinstance(first, S.Name) and scope.get(first.name) is None:
+            # `limit(x, 2)`: a bare name that is not a value is the variable itself.
+            return Quantity(point.value, point.dim)
+        if isinstance(first, S.Name) or isinstance(first, S.Call):
+            value = self.eval(first, scope)
+            if not isinstance(value, (FunctionReference, PartialFunction, GridFunction)):
+                # A plain value has no limit to take: limit(3, 0) is 3.
+                return value
+            numeric = self._as_numeric_function(value, scope, node.span, "limit()")
+            return Quantity(_approach(numeric, point.value), point.dim)
+        expression, order = calculus.lhopital_order(first, "x", point.value)
+        if order:
+            simplified = calculus.simplify(calculus._substitute(expression, "x", point.value))
+            try:
+                exact = calculus._evaluate(simplified)
+            except (ValueError, ZeroDivisionError, OverflowError):
+                exact = None
+            if exact is not None and math.isfinite(exact):
+                return Quantity(exact, point.dim)
+        numeric = self._as_numeric_function(PartialFunction(first, self, scope, "expression"),
+                                            scope, node.span, "limit()")
+        return Quantity(_approach(numeric, point.value), point.dim)
+
+    def _symbolic_diff(self, node) -> Text:
+        """`diff(x^2)` gives `2x`: the derivative of an expression, as text."""
+        from . import calculus
+
+        derivative = calculus.simplify(calculus.differentiate(node, "x"))
+        return Text(format_expr(derivative))
+
+    def callback_function(self, node, scope: Scope):
+        """The function argument of integrate/derivative/fzero/minimize/surface.
+
+        A name or a call is evaluated as usual.  Anything else is a bare expression such as `x^2`,
+        which becomes a function of the variable the limits are written in.
+        """
+        if isinstance(node, (S.Name, S.Call)) and not (
+                isinstance(node, S.Name) and node.name == "x" and scope.get("x") is None):
+            return self.eval(node, scope)
+        return PartialFunction(node, self, scope, "expression")
+
+    def _as_numeric_function(self, value, scope: Scope, span, what: str,
+                             arity: int = 1) -> Callable[..., float]:
+        function = self.as_function(value, scope, span, what, arity)
+
+        def call(*coordinates: float) -> float:
+            if arity == 1:
+                result = function.call(Quantity(coordinates[0]))
+            else:
+                result = function.call(*[Quantity(c) for c in coordinates])
             if isinstance(result, Quantity):
                 return result.magnitude(result.unit) if result.unit is not None else result.value
             raise ForgeEvalError(f"{what} must return a number, found text")
@@ -348,6 +502,10 @@ class Evaluator:
             want = f"{lo}" if lo == hi else f"{lo} or more"
             raise ForgeSyntaxError(f"{name}() takes {want} value(s) but got {len(node.args)}", node.span)
         try:
+            if name in FILE_FUNCTIONS:
+                return self.file_io(name, [self.eval(arg, scope) for arg in node.args], node.span)
+            if name == "diff" and _is_symbolic(node.args[0], scope):
+                return self._symbolic_diff(node.args[0])
             if name in CALLBACK_FUNCTIONS:
                 return self._callback(name, node, scope)
             args = [self.eval(a, scope) for a in node.args]
@@ -360,11 +518,19 @@ class Evaluator:
     def _callback(self, name: str, node: S.Call, scope: Scope):
         span = node.span
         tolerance = None
+        if name == "limit":
+            return self._limit(node, scope)
+        if name == "dsolve":
+            return self._dsolve(node, scope)
         if name == "surface":
-            function, xs, ys = [self.eval(a, scope) for a in node.args]
-            if isinstance(function, PartialFunction):
-                function = function.with_variable("x")
-            numeric = self._as_numeric_function(function, scope, span, "surface()")
+            xs, ys = [self.eval(a, scope) for a in node.args[1:]]
+            first = node.args[0]
+            if isinstance(first, (S.Name, S.Call)):
+                function = self.eval(first, scope)
+            else:
+                # `surface(x*y, ...)`: a bare expression of x and y over the whole grid.
+                function = self.two_variable_function(first, scope, xs, ys)
+            numeric = self._as_numeric_function(function, scope, span, "surface()", arity=2)
             return _surface(numeric, xs, ys, span)
         if name == "roots":
             lines = self.eval(node.args[0], scope)
@@ -381,7 +547,7 @@ class Evaluator:
             from_node = node.args[1]
             to_node = node.args[2] if len(node.args) > 2 else from_node
             a, b = self.eval(from_node, scope), self.eval(to_node, scope)
-        function = _resolve_function(self.eval(node.args[0], scope), (from_node, to_node))
+        function = _resolve_function(self.callback_function(node.args[0], scope), (from_node, to_node))
         numeric = self._as_numeric_function(function, scope, span, f"{name}()")
         unit = _function_unit(function)
         if name == "integrate":
@@ -389,11 +555,12 @@ class Evaluator:
                 raise ForgeEvalError("integrate() limits must be quantities")
             if a.dim != b.dim:
                 raise UnitError("integrate() limits must have matching units")
-            dimension = (unit.dim if unit is not None else DIMLESS) * a.dim
+            # The integral of f over x has the units of f times x, which the limits reveal.
+            dimension = _function_dim(function, a, numeric, scope) * a.dim
             tolerance = scale_free(tolerance, span) if tolerance is not None else 1e-9
             return Quantity(adaptive_simpson(numeric, a.value, b.value, tolerance), dimension)
         if name == "derivative":
-            dimension = (unit.dim if unit is not None else DIMLESS) / a.dim
+            dimension = _function_dim(function, a, numeric, scope) / a.dim
             step = max(1e-6, abs(a.value) * 1e-6)
             value = (numeric(a.value + step) - numeric(a.value - step)) / (2 * step)
             return Quantity(value, dimension)
@@ -449,7 +616,50 @@ def _function_unit(function) -> Optional[Quantity]:
     return result if isinstance(result, Quantity) else None
 
 
+def _function_dim(function, at: Quantity, numeric, scope) -> Dim:
+    """The dimension f(x) has when x is measured like `at`, so `x^2` over metres is an area."""
+    from .dimensions import Dim
 
+    if hasattr(function, "variable"):
+        # A bare expression is evaluated at a quantity, which gives its terms units.
+        try:
+            result = function.call(Quantity(1.0, at.dim))
+        except ForgeError:
+            result = None
+        if isinstance(result, Quantity):
+            return result.dim
+    unit = _function_unit(function)
+    return unit.dim if unit is not None else Dim.of()
+
+
+
+
+
+def _clean_root(z: complex) -> complex:
+    """Tidy the tiny real part that floating point leaves in a purely imaginary root."""
+    real = 0.0 if abs(z.real) <= 1e-12 * max(1.0, abs(z.imag)) else z.real
+    return complex(real, z.imag)
+
+
+def _approach(numeric, at: float, span=None) -> float:
+    """The value a numeric function settles on as it nears `at` from both sides.
+
+    Very large results mean the two sides diverge, which a one-sided limit could still describe.
+    """
+    steps = [10.0 ** -k for k in range(3, 13)]
+    left = [numeric(at - step) for step in steps]
+    right = [numeric(at + step) for step in steps]
+    if any(not math.isfinite(value) for value in left + right):
+        raise ForgeEvalError("the limit is not finite here", span,
+                             hint="Check the values around the point, or use a one-sided approach.")
+    settled_left, settled_right = left[-1], right[-1]
+    scale = max(1.0, abs(settled_left), abs(settled_right))
+    if abs(settled_left - settled_right) > 1e-6 * scale:
+        raise ForgeEvalError(
+            f"the limit does not exist: the two sides approach {format_number(settled_left)} and "
+            f"{format_number(settled_right)}", span,
+            hint="A one-sided limit may exist; check the expression near the point.")
+    return 0.5 * (settled_left + settled_right)
 
 
 def _real_roots(coefficients: List[Quantity], span) -> Vector:
@@ -493,7 +703,27 @@ def truth(value, span=None) -> bool:
 
 
 COMPARISONS = ("==", "!=", "<=", ">=", "<", ">")
-CALLBACK_FUNCTIONS = frozenset({"integrate", "derivative", "roots", "fzero", "minimize", "surface"})
+CALLBACK_FUNCTIONS = frozenset({"integrate", "derivative", "roots", "fzero", "minimize", "surface",
+                               "limit", "dsolve"})
+FILE_FUNCTIONS = frozenset({"readtable", "csvwrite"})
+
+
+def _is_symbolic(node, scope: Scope) -> bool:
+    """Is this argument an expression to differentiate (`x^2`) rather than a value to difference?
+
+    A name that is not a value, or an expression containing such a name, is symbolic; anything
+    else (`v`, `<1, 4, 9>`, `f(x)`) is a value and takes the numeric meaning.
+    """
+    if isinstance(node, (S.Number, S.QuantityLit, S.StringLit, S.VectorLiteral, S.MatrixLiteral)):
+        return False
+    if isinstance(node, S.Name):
+        return scope.get(node.name) is None
+    return any(scope.get(name) is None and name == "x" for name in S.names_in(node))
+
+
+def _no_file_io(name: str, args: list, span) -> object:
+    raise ForgeEvalError(f"{name}() needs a running interpreter, which this evaluation does not have",
+                         span, hint="Run the program with forge run, the shell, or an IDE.")
 
 
 def compare(left, right, op: str, span=None):
@@ -660,6 +890,8 @@ def _apply(name: str, args: List[object]):
         slope.unit = None
         intercept.unit = None
         return Vector((slope, intercept, Quantity(r_squared)))
+    if name == "trapz":
+        return _trapz(args)
     if name == "diff":
         return diff(numeric_items(args[0], name))
     if name == "cumsum":
@@ -718,18 +950,27 @@ def _apply(name: str, args: List[object]):
         return Quantity(10 ** (q.value / 10))
     if name == "dbm":
         q = _scalar_in(args[0], "dbm")
-        if q.dim != DIMLESS:
-            raise UnitError("dbm() needs a power in watts, such as 5 mW; divide by 1 W if needed")
+        power_dim = lookup_unit("W").dim
+        if q.dim != power_dim:
+            if q.dim.is_dimensionless:
+                q = Quantity(q.value, power_dim)  # a plain number is read as watts
+            else:
+                raise UnitError(f"dbm() needs a power in watts, found {describe_full(q.dim)}",
+                                hint="Write the power in W, for example 0.001 W or 1 mW.")
         if q.value <= 0:
             raise ForgeEvalError("dbm() needs a positive power")
-        return Quantity(10 * math.log10(q.value / 1e-3), lookup_unit("dB").dim, unit_named("dB"))
+        level = 10 * math.log10(q.value / 1e-3)  # dB above 1 mW
+        return Quantity(level, lookup_unit("dBm").dim, unit_named("dBm"))
     if name in ("pH", "fromPH"):
         if name == "pH":
             q = _scalar_in(args[0], "pH")
-            if q.value <= 0:
-                raise ForgeEvalError("pH() needs a positive concentration (use mol/L)")
-            return Quantity(-math.log10(q.value))
-        return Quantity(10 ** (-_dimless(_scalar_in(args[0], "fromPH"), "fromPH")))
+            # pH is defined on the molar scale, so a concentration in SI (mol/m³) is converted.
+            molar = q.magnitude(MOLAR) if q.dim == MOLAR.dim else q.magnitude(q.unit or MOLAR)
+            if molar <= 0:
+                raise ForgeEvalError("pH() needs a positive concentration, such as 1e-7 mol/L")
+            return Quantity(-math.log10(molar))
+        level = _dimless(_scalar_in(args[0], "fromPH"), "fromPH")
+        return Quantity.from_unit(10 ** (-level), MOLAR)  # mol/L
     if name in ("real", "imag", "conj", "arg", "mag"):
         return _complex_part(name, _scalar_in(args[0], name))
     if name in ("floor", "ceil", "round", "sign"):
@@ -829,8 +1070,8 @@ def _apply(name: str, args: List[object]):
                     return Quantity(-((-q.value) ** (1 / 3)), q.dim ** Fraction(1, 3))
                 return q ** Quantity(1 / 3)
             if q.value < 0 and not q.is_complex:
-                raise ForgeEvalError(f"sqrt() of a negative number ({q})",
-                                     hint="The result would be imaginary; write it with i, e.g. sqrt(-1 + 0i).")
+                # The square root of a negative quantity is imaginary, which the language supports.
+                return Quantity(_clean_root(complex(q.value) ** 0.5), q.dim ** Fraction(1, 2))
             return q ** Quantity(0.5)
         if name == "abs":
             q = scalars[0]
@@ -853,6 +1094,34 @@ def _items(value, fname: str) -> List[Element]:
 
 def sorted_items(items: List[Element], order: str) -> List[Element]:
     return ascending_all(items) if order == "asc" else descending_all(items)
+
+
+def _trapz(args) -> Quantity:
+    """trapz(y) or trapz(x, y): the trapezoidal estimate of an integral.
+
+    `trapz(distance, force)` gives the work done; the result has the units of x times y (or of y
+    alone when only the samples are given, where the spacing is one unit).
+    """
+    if len(args) == 1:
+        values = numeric_items(args[0], "trapz")
+        if len(values) < 2:
+            raise ForgeEvalError("trapz() needs at least two values")
+        dimension = values[0].dim
+        total = sum(0.5 * (values[i].value + values[i + 1].value) for i in range(len(values) - 1))
+        return Quantity(total, dimension)
+    xs = numeric_items(args[0], "trapz")
+    ys = numeric_items(args[1], "trapz")
+    if len(xs) != len(ys):
+        raise ForgeEvalError(f"trapz() needs x and y of the same length, found {len(xs)} and {len(ys)}")
+    if len(xs) < 2:
+        raise ForgeEvalError("trapz() needs at least two points")
+    same_units(xs, "trapz")
+    same_units(ys, "trapz")
+    total = 0.0
+    for index in range(len(xs) - 1):
+        width = xs[index + 1].value - xs[index].value
+        total += 0.5 * width * (ys[index].value + ys[index + 1].value)
+    return Quantity(total, xs[0].dim * ys[0].dim)
 
 
 def _linspace(args) -> Vector:
@@ -903,21 +1172,22 @@ def _surface(numeric, xs, ys, span=None) -> Matrix:
     if len(coordinates) != len(xs.items) + len(ys.items):
         raise ForgeEvalError("surface() needs numeric coordinates", span)
     return Matrix(tuple(
-        tuple(Quantity(numeric(x.value)) for x in xs.items)  # type: ignore[union-attr]
-        for _y in ys.items
+        tuple(Quantity(numeric(x.value, y.value)) for x in xs.items)  # type: ignore[union-attr]
+        for y in ys.items
     ))
 
 
 def _complex_part(name: str, q: Quantity) -> object:
     value = complex(q.value)
+    keep = q.unit if q.unit is not None and not q.unit.affine else None
     if name == "real":
-        return Quantity(value.real, q.dim)
+        return Quantity(value.real, q.dim, keep)
     if name == "imag":
-        return Quantity(value.imag, q.dim)
+        return Quantity(value.imag, q.dim, keep)
     if name == "mag":
-        return Quantity(abs(value), q.dim)
+        return Quantity(abs(value), q.dim, keep)
     if name == "arg":
         if value == 0:
             raise ForgeEvalError("arg() of zero has no phase angle")
         return Quantity(cmath.phase(value), ANGLE)
-    return Quantity(complex(value.real, -value.imag), q.dim)
+    return Quantity(complex(value.real, -value.imag), q.dim, keep)

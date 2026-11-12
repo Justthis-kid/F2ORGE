@@ -23,9 +23,14 @@ def test_functions(src, expected):
     assert run(src) == [expected]
 
 
-@pytest.mark.parametrize("src", ["ln(0)", "ln(-1)", "log(0)", "sqrt(-1)", "asin(2)", "5 / 0", "0 ^ -1", "(-8) ^ 0.5"])
+@pytest.mark.parametrize("src", ["ln(0)", "ln(-1)", "log(0)", "asin(2)", "5 / 0", "0 ^ -1", "(-8) ^ 0.5"])
 def test_math_domain_errors(src):
     assert isinstance(error_of(src), ForgeEvalError)
+
+
+def test_square_root_of_a_negative_quantity_is_imaginary():
+    assert run("sqrt(-1)") == ["i"]
+    assert run("sqrt(-9 m^2)") == ["3i m"]
 
 
 def test_variables_and_ans():

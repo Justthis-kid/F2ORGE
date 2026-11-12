@@ -211,6 +211,18 @@ class Solve:
 
 
 @dataclass(frozen=True)
+class SolveSystem:
+    """solve a, b for x, y { ... }: find several unknowns of several equations at once."""
+
+    equations: Tuple[str, ...]
+    unknowns: Tuple[str, ...]
+    givens: Tuple[Tuple[str, object, Optional[Span]], ...] = ()
+    span: Optional[Span] = None
+    name_spans: Tuple[Span, ...] = ()
+    unknown_spans: Tuple[Span, ...] = ()
+
+
+@dataclass(frozen=True)
 class Import:
     target: str
     is_path: bool

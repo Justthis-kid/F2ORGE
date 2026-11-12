@@ -18,6 +18,8 @@ from .text import Text
 
 Element = Union[Quantity, "Vector", Text]
 
+ALL: object = object()  # the `:` of an index, meaning every position along that axis
+
 
 @dataclass(frozen=True)
 class Vector:
@@ -136,7 +138,18 @@ def add(left: Value, right: Value) -> Value:
             raise ForgeEvalError("matrices must have the same shape for addition")
         return Matrix(tuple(tuple(a + b for a, b in zip(arow, brow))
                             for arow, brow in zip(left.rows, right.rows)))
-    raise ForgeEvalError("addition requires values of the same kind and shape")
+    if isinstance(left, (Vector, Matrix)) and isinstance(right, Quantity):
+        return _with_each(left, lambda item: item + right)  # <1 m, 2 m> + 3 m
+    if isinstance(left, Quantity) and isinstance(right, (Vector, Matrix)):
+        return _with_each(right, lambda item: left + item)
+    raise ForgeEvalError("addition requires two numbers, two vectors, or two matrices of one shape")
+
+
+def _with_each(value: LinearValue, apply) -> LinearValue:
+    """Apply an element operation (a scalar added to each element) to a vector or matrix."""
+    if isinstance(value, Vector):
+        return Vector(tuple(apply(item) for item in value.items))
+    return Matrix(tuple(tuple(apply(item) for item in row) for row in value.rows))
 
 
 def subtract(left: Value, right: Value) -> Value:
@@ -153,7 +166,11 @@ def subtract(left: Value, right: Value) -> Value:
             raise ForgeEvalError("matrices must have the same shape for subtraction")
         return Matrix(tuple(tuple(a - b for a, b in zip(arow, brow))
                             for arow, brow in zip(left.rows, right.rows)))
-    raise ForgeEvalError("subtraction requires values of the same kind and shape")
+    if isinstance(left, (Vector, Matrix)) and isinstance(right, Quantity):
+        return _with_each(left, lambda item: item - right)
+    if isinstance(left, Quantity) and isinstance(right, (Vector, Matrix)):
+        return _with_each(right, lambda item: left - item)
+    raise ForgeEvalError("subtraction requires two numbers, two vectors, or two matrices of one shape")
 
 
 def multiply(left: Value, right: Value) -> Value:
@@ -413,12 +430,15 @@ def select(value: Value, indices: Sequence[Value], count: Optional[Value] = None
     if count is None:
         if len(indices) > 2:
             raise ForgeEvalError("cardinal indexing takes at most two indices")
-    elif len(indices) != 1:
-        raise ForgeEvalError("a counted selection such as M[:, j:k] needs exactly one index")
+    elif len(indices) > 2:
+        raise ForgeEvalError("a counted selection such as M[j:j+n, k] takes at most two indices")
 
-    def positions_of(selector: Value, limit: int, what: str) -> List[int]:
+    def positions_of(selector: Value, limit: int, what: str, count_in: Optional[Value] = count) -> List[int]:
+        """Positions chosen along one axis; `count_in` widens a single index into a run."""
+        if selector is ALL:
+            return list(range(limit))  # `:` in an index selects everything along that axis
         if isinstance(selector, Vector):
-            if count is not None:
+            if count_in is not None and selector.items:
                 raise ForgeEvalError("a counted selection uses a plain number after ':'")
             out = []
             for item in selector.items:
@@ -431,29 +451,40 @@ def select(value: Value, indices: Sequence[Value], count: Optional[Value] = None
         if not isinstance(selector, Quantity) or not selector.is_plain or not selector.value.is_integer():
             raise ForgeEvalError(f"{what} position must be a whole number")
         first = int(selector.value)
-        last = first if count is None else first + (int(count.value) if isinstance(count, Quantity) else 0)
-        if count is not None and not count.value.is_integer():
+        last = first if count_in is None else first + (int(count_in.value) if isinstance(count_in, Quantity) else 0)
+        if count_in is not None and not count_in.value.is_integer():
             raise ForgeEvalError("a counted selection needs a whole number after ':'")
         if last < first:
-            raise ForgeEvalError(f"the end of a counted selection must not come before its start")
+            raise ForgeEvalError("the end of a counted selection must not come before its start")
         if first < 0 or last > limit:
             raise ForgeEvalError(f"{what} index is out of range")
-        return list(range(first, last))
+        return list(range(first, last)) if count_in is not None else [first]
 
     if isinstance(value, Vector):
         if len(indices) > 1:
             raise ForgeEvalError("a vector takes one index")
+        if indices[0] is ALL:
+            return [Vector(value.items)] if count is not None else list(value.items)
         chosen = positions_of(indices[0], take, "vector")
         items: List[Element] = [value.items[i] for i in chosen]
         return [Vector(tuple(items))] if count is not None else items
 
     rows, columns = value.shape
     if len(indices) == 2:
-        row_positions = positions_of(indices[0], rows, "row")
-        column_positions = positions_of(indices[1], columns, "column")
+        # The count belongs to the index written as j:j+n; the other index is a single position.
+        row_positions = positions_of(indices[0], rows, "row", count)
+        column_positions = positions_of(indices[1], columns, "column", None)
         cells = [[value.rows[i][j] for j in column_positions] for i in row_positions]
         if count is not None:
-            return [Matrix(tuple(tuple(row) for row in cells))]
+            # M[j:j+n, k] picks a block: n values from the counted axis, one from the other, so
+            # the result keeps two dimensions instead of collapsing to a run of values.
+            if indices[0] is ALL:
+                return [Matrix(tuple(tuple(cell,) for cell in cells))]
+            if indices[1] is ALL:
+                return [Matrix((tuple(cells[0]),))]
+            if len(cells) > 1:
+                return [Matrix(tuple((row[0],) for row in cells))]
+            return [Matrix(((cells[0][0],),))]
         return [Vector(tuple(row)) for row in cells]
     chosen_rows = positions_of(indices[0], rows, "row")
     if count is not None:
@@ -497,6 +528,11 @@ def numeric_items(value: Value, function: str) -> List[Quantity]:
     if not items or any(not isinstance(item, Quantity) for item in items):
         raise ForgeEvalError(f"{function}() requires numbers, found text or rows")
     return items  # type: ignore[return-value]
+
+
+def same_units(items: Sequence[Quantity], function: str) -> Dim:
+    """The one dimension a list of quantities shares, or a unit error naming the function."""
+    return _same_dim(items, function)
 
 
 def _same_dim(items: Sequence[Quantity], function: str) -> Dim:

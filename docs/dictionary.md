@@ -40,7 +40,13 @@ support for unlisted or planned syntax. For examples in sequence, read the
 | `graph` | Sweep a worksheet input and graph an output: `graph force over acceleration from 0 m/s^2 to 20 m/s^2`. |
 | `over`, `from`, `to` | Specify the input being swept and the two range endpoints of a worksheet graph. |
 | `solve` | Start a solve request: `solve Force for a { F = 100 N; m = 50 kg }`. |
-| `for` | Name the unknown in a `solve` statement. It does not introduce a loop. |
+| `solve A, B for x, y` | Solve several equations for several unknowns at once. |
+| `for` | Start a loop: `for k in 1..10 { ... }` (or `for k = 1..10`). Inside `solve` it names the unknown instead. |
+| `if`, `elseif`, `else` | Choose between blocks: `if speed > 20 m/s { ... } else { ... }`. |
+| `while` | Repeat while a condition holds: `while n < 3 { n = n + 1 }`. |
+| `def`, `fn` | Define a function: `def area(r) { return pi * r^2 }`. |
+| `return` | Give a function's result and leave it. |
+| `break`, `continue` | Leave a loop, or start its next pass. |
 | `import` | Load an equation by library name or `.eq` path. |
 | `export` | Write a named equation to a `.eq` file. |
 | `convert` | Convert a quantity: `convert 10 ft -> m`. |
@@ -48,7 +54,8 @@ support for unlisted or planned syntax. For examples in sequence, read the
 | `description` | Conventional equation metadata key consumed by equation documentation generation. |
 | `ans` | Workspace value set when a bare expression or `convert` statement is evaluated. |
 
-General conditional and looping statements are not part of the current language.
+F²ORGE has general-purpose `if`/`elseif`/`else`, `for`, and `while` statements and user-defined
+functions. String interpolation is not supported.
 
 ## Operators and punctuation
 
@@ -77,20 +84,33 @@ unit compounds tightly (`kg*m/s^2`) and expression operators with spaces (`10 m 
 
 | Function | Meaning and constraints |
 |---|---|
-| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions. Input must be dimensionless; `deg` and `rad` are available angle scales. |
-| `asin(x)`, `acos(x)`, `atan(x)` | Inverse trigonometric functions; return a dimensionless radian value. `asin` and `acos` require inputs in `[-1, 1]`. |
+| `sin(x)`, `cos(x)`, `tan(x)` | Trigonometric functions. Input is an angle (`deg`, `rad`, `rev`) or a plain number of radians. |
+| `asin(x)`, `acos(x)`, `atan(x)` | Inverse trigonometric functions; the result is an angle in radians. `asin` and `acos` require inputs in `[-1, 1]`. |
 | `atan2(y, x)` | Two-input angle; both values must have matching dimensions. |
-| `exp(x)` | Exponential function; input must be dimensionless. |
-| `ln(x)` | Natural logarithm; input must be positive and dimensionless. |
-| `log(x)` | Base-10 logarithm; input must be positive and dimensionless. |
-| `sqrt(x)` | Square root of a nonnegative quantity. |
-| `abs(x)` | Absolute magnitude of a scalar quantity. |
-| `min(a, b, ...)`, `max(a, b, ...)` | Select among two or more compatible scalar quantities. |
-| `transpose(A)` | Transpose matrix `A`. |
-| `inverse(A)` | Invert a square, dimensionless matrix; singular matrices are rejected. |
+| `exp(x)`, `ln(x)`, `log(x)`, `log2(x)`, `log(x, base)` | Exponential and logarithm functions in several bases. |
+| `sqrt(x)`, `cbrt(x)` | Roots; the square root of a negative quantity is imaginary (`sqrt(-1)` is `i`). |
+| `abs(x)`, `sign(x)`, `floor(x)`, `ceil(x)`, `round(x, n)` | Magnitude and rounding. |
+| `min(a, b, ...)`, `max(a, b, ...)`, `clamp(x, lo, hi)` | Select among, or bound, compatible scalar quantities. |
+| `cross(a, b)` | Cross product of two length-3 vectors. |
+| `transpose(A)`, `inverse(A)`, `det(A)` | Transpose, invert (square matrices with consistent units), and determinant. |
+| `solve_system(A, b)` | Solve the linear system `A x = b`. |
+| `sum`, `mean`, `median`, `std`, `pstd`, `var`, `pvar`, `percentile`, `linreg` | Summary statistics; `p` forms are population statistics. |
+| `cumsum`, `diff`, `normalize`, `count`, `size`, `sort`, `select`, `reshape`, `concat` | Vector utilities. |
+| `linspace`, `logspace`, `range` | Build regularly spaced or ranged vectors. |
+| `readtable("data.csv")`, `csvwrite("out.csv", table)` | Read a CSV file into a table, or write one back. Paths are relative to the program. |
+| `integrate(f, a, b)`, `derivative(f, x)` | Numeric calculus on a function or a bare expression such as `x^2`. |
+| `fzero(f, a, b)`, `minimize(f, a, b)`, `roots(coeffs)` | Root finding and minimisation. |
+| `surface(f, xs, ys)` | Sample a two-variable function into a grid matrix. |
+| `db`, `undb`, `dbm` | Decibel ratios and power levels. |
+| `pH`, `fromPH` | pH from a concentration and the reverse. |
+| `real`, `imag`, `conj`, `arg`, `mag` | Parts of a complex quantity. |
+| `format`, `text`, `upper`, `lower`, `char`, `ascii` | Build and inspect text. |
+
+Enter `i` for the imaginary unit (`3 + 4i`, or `4i ohm` for an impedance). Indices into a vector
+or matrix are zero-based, and `:` selects a whole axis (`M[:, 0]`, `v[0:2]`).
 
 User-defined equation calls use the equation's name and named inputs, not positional arguments:
-`Force(m = 2 kg, a = 3 m/s^2)`.
+`Force(m = 2 kg, a = 3 m/s^2)`. User functions are called positionally: `area(2 m)`.
 
 ## Built-in constants
 
@@ -137,7 +157,11 @@ authoritative list in an installed version and `forge units FILTER` to narrow it
 | Amount | `mol` |
 | Volume | `L` (`l`), `gal`, `qt` |
 | Speed | `mph`, `kph`, `kn` (`knot`) |
-| Angle | `rad`, `deg` (`°`) |
+| Angle | `rad`, `deg` (`°`), `rev`, `grad`, `arcmin`, `arcsec` |
+| Angular velocity | `rps`, `rpm` (convert to `rad/s`, not to `1/s`) |
+| Logarithmic level | `dB`, `dBm` (dBm is above 1 mW), `Np` |
+| Ratio | `%` (`percent`, `pct`), `ppm` |
+| Currency | `USD`, `EUR`, `GBP`, `JPY`, `CAD`, `AUD` (dimensions of their own; no rates) |
 
 Prefixes supported for prefixable units are `T` (tera), `G` (giga), `M` (mega), `k` (kilo),
 `c` (centi), `m` (milli), `u` or `µ` (micro), `n` (nano), `p` (pico), and `f` (femto). The exact

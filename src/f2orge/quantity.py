@@ -35,20 +35,27 @@ def format_number(x: float) -> str:
     return f"{x:.10g}"
 
 
-def format_complex(z: complex) -> str:
-    """'4', '3i', '-2 + 5i' — the imaginary part without trailing '.0'."""
+def format_complex(z: complex, unit_text: str = "") -> str:
+    """'4', '3i', '-2 + 5i' — the imaginary part without trailing '.0'.
+
+    With a unit, both parts carry it: `3 Ω - 4i Ω`, which is how an impedance is written.
+    """
     real, imag = z.real, z.imag
+    suffix = f" {unit_text}" if unit_text else ""
     if imag == 0:
         return format_number(real)
     imag_text = "" if abs(imag) == 1 and not real else format_number(abs(imag))
     if real == 0:
-        return ("-" if imag < 0 else "") + imag_text + "i"
+        return ("-" if imag < 0 else "") + imag_text + "i" + suffix
     sign = "+" if imag > 0 else "-"
-    return f"{format_number(real)} {sign} {imag_text}i"
+    return f"{format_number(real)}{suffix} {sign} {imag_text}i{suffix}"
 
 
-def format_value(x: Number) -> str:
-    return format_complex(x) if isinstance(x, complex) else format_number(x)
+def format_value(x: Number, unit_text: str = "") -> str:
+    if isinstance(x, complex):
+        return format_complex(x, unit_text)
+    number = format_number(x)
+    return f"{number} {unit_text}" if unit_text else number
 
 
 def _clean(x: Number) -> Number:
@@ -192,8 +199,7 @@ class Quantity:
     def __str__(self) -> str:
         if self.unit is not None:
             text = self.unit.symbol()
-            number = format_value(self.magnitude(self.unit))
-            return f"{number} {text}" if text else number
+            return format_value(self.magnitude(self.unit), text)
         if self.dim.is_dimensionless:
             return format_value(self.value)
         if self.dim == ANGLE and not isinstance(self.value, complex):

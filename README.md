@@ -358,9 +358,13 @@ not block a dependable language and solver.
 | Native worksheets with unit-declared inputs, calculated outputs, descriptions, and graph sweeps | Implemented |
 | Equation documentation and reusable standard-library formulas | Documentation implemented; formula library growing |
 | Solve for a variable, rearrange equations, and report missing information | Implemented |
+| Simultaneous systems: `solve A, B for x, y` with inferred units and a Newton solver | Implemented |
+| Control flow (`if`/`elseif`/`else`, `for`, `while`, `break`, `continue`) and user functions (`def`, `fn`) | Implemented |
+| Script-level data files: `readtable()` and `csvwrite()` with unit-aware columns | Implemented |
+| Calculus: symbolic `diff()`, numeric `integrate`/`derivative`, `trapz()`, and `limit()` | Implemented |
 | CLI execution, interactive shell, local files, and explanatory source locations | Implemented |
 | VS Code syntax highlighting | Available |
-| Vectors and matrices: arithmetic, products, transpose, inverse | Initial implementation; inverse is dimensionless-only |
+| Vectors and matrices: arithmetic, products, transpose, inverse | Implemented; inverse is unit-aware for matrices whose units factor into rows and columns |
 
 ### Companion tools (useful, but not required for the language core)
 
@@ -412,10 +416,13 @@ Source layout: `src/f2orge/` (`units.py` registry, `dimensions.py`, `quantity.py
 
 ## Known limits
 
-* The solver handles one equation at a time; simultaneous systems are not supported yet.
-* Numeric solving needs the unknown's unit to be declared.
-* `rad` and `deg` are dimensionless, so angular velocity in rad/s is the same dimension as 1/s.
-* Currencies, logarithmic units (dB) and `rpm` are not defined.
+* Numeric solving of a single equation needs the unknown's unit to be declared (for systems, units
+  are inferred from the relations unless an equation declares them).
+* `rad` and `deg` are their own dimension, so `rad/s` is an angular velocity while `1/s` is a
+  frequency; trig functions accept an angle or a plain number of radians.
+* Currencies have a dimension of their own and no exchange rates; `dB` and `rpm` are defined as
+  their own kinds of unit.
+* `inverse()` needs a square matrix whose elements factor into row and column dimensions.
 * Graph export is an optional companion tool: it plots one callable equation output against one
   declared input; multiple curves vary a single additional input (up to 20 curves). Pillow is
   needed only for PNG/PDF exports; native plot and calculator windows need the desktop extra.

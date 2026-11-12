@@ -21,7 +21,7 @@ from .linear_algebra import Matrix, Value, Vector
 from .parser import parse
 from .printer import format_equation
 from .quantity import Quantity
-from .solver import solve
+from .solver import solve, solve_system
 from .text import Text
 from .units import Unit
 
@@ -88,6 +88,7 @@ class Interpreter:
         self.evaluator.import_hint = self._import_hint
         self.evaluator.lookup_function = self.lookup_function
         self.evaluator.interpreter = self
+        self.evaluator.file_io = self._file_io
         self._dirs: List[Path] = [self.base_dir]
         self._loaded: Dict[Path, List[str]] = {}
         self._loading: List[Path] = []
@@ -229,6 +230,26 @@ class Interpreter:
     def lookup_function(self, name: str) -> Optional[UserFunction]:
         return self.functions.get(name)
 
+    # ---- file I/O for scripts ------------------------------------------------------------------
+    def _file_io(self, name: str, args: list, span=None):
+        """readtable() and csvwrite(): paths are relative to the program being run."""
+        from .tables import read_table_file, resolve_path, write_table_file
+
+        if name == "readtable":
+            target = args[0] if args else None
+            if not isinstance(target, Text):
+                raise ForgeError("readtable() needs a file name as text", span, title="Cannot read file",
+                                 hint='Write: readtable("data.csv")')
+            return read_table_file(resolve_path(self._dirs[-1], target.value, span), span)
+        if not args:
+            raise ForgeError("csvwrite() needs a file name and a table", span, title="Cannot write file")
+        target = args[0]
+        if not isinstance(target, Text):
+            raise ForgeError("csvwrite() needs a file name as text", span, title="Cannot write file",
+                             hint='Write: csvwrite("out.csv", table)')
+        write_table_file(resolve_path(self._dirs[-1], target.value, span, writing=True), args[1], span)
+        return Text(f"wrote {target.value}")
+
     # ---- function values for integrate() and friends ------------------------------------------
     def function_value(self, value: Value, what: str = "function"):
         """Wrap a user function or expression as a Python callable for mathlib solvers."""
@@ -274,6 +295,8 @@ class Interpreter:
             self.equations[eq.name] = eq
         elif isinstance(st, S.WorksheetDef):
             self._define_worksheet(st)
+        elif isinstance(st, S.SolveSystem):
+            self._solve_system(st)
         elif isinstance(st, S.Solve):
             self._solve(st)
         elif isinstance(st, S.Import):
@@ -289,8 +312,8 @@ class Interpreter:
         samples = build_samples(
             values,
             x_value,
-            x_name=st.x.name if isinstance(st.x, S.Name) else None,
-            y_names=[node.name if isinstance(node, S.Name) else None for node in st.ys],
+            x_name=_plot_name(st.x),
+            y_names=[_plot_name(node) for node in st.ys],
             polar=st.polar,
             kind=st.kind,
             span=st.span,
@@ -307,6 +330,7 @@ class Interpreter:
             self.out(f"Plot: {summary}")
 
     def _define_worksheet(self, definition: S.WorksheetDef) -> None:
+        """Register a worksheet declaration for the IDE."""
         inputs = [item for item in definition.items if isinstance(item, S.WorksheetInput)]
         outputs = [item for item in definition.items if isinstance(item, S.WorksheetOutput)]
         graphs = [item for item in definition.items if isinstance(item, S.WorksheetGraph)]
@@ -536,6 +560,22 @@ class Interpreter:
             raise ForgeNameError(f"There is no equation named '{name}'", span, hint=hint, title="Unknown equation")
         return eq
 
+    def _solve_system(self, st: S.SolveSystem) -> None:
+        equations = [self.get_equation(name, span) for name, span in zip(st.equations, st.name_spans)]
+        givens: Dict[str, Tuple[Quantity, Optional[object]]] = {}
+        for name, expr, name_span in st.givens:
+            givens[name] = (self.evaluator.eval(expr, self.scope()), getattr(expr, "span", None) or name_span)
+        solution = solve_system(equations, list(st.unknowns), givens, self.evaluator, call_span=st.span)
+        for name in st.unknowns:
+            self.variables[name] = solution.values[name]
+            self.out(f"{name} = {solution.values[name]}")
+        self.variables["ans"] = solution.values[st.unknowns[-1]]
+        if self.explain:
+            for step in solution.steps:
+                self.out(f"  {step}")
+        for note in solution.notes:
+            self.out(f"  note: {note}")
+
     def _solve(self, st: S.Solve) -> None:
         eq = self.get_equation(st.eq, st.eq_span)
         givens: Dict[str, Tuple[Quantity, Optional[object]]] = {}
@@ -646,6 +686,19 @@ def display(value) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     return str(value)
+
+
+def _plot_name(node) -> Optional[str]:
+    """A readable axis name for a plot argument: `v`, `fall[1]`, or the expression's text."""
+    if isinstance(node, S.Name):
+        return node.name
+    from .printer import format_expr
+
+    if isinstance(node, S.Index):
+        base = _plot_name(node.obj)
+        if base is not None:
+            return base + "[" + ", ".join(format_expr(item) for item in node.indices) + "]"
+    return format_expr(node)
 
 
 def _numeric(value, what: str) -> list:

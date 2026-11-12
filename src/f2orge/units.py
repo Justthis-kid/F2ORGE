@@ -134,11 +134,12 @@ def _build() -> None:
     _add("grad", angle, math.pi / 200.0, kind="angle", aliases=("gon",), prefix=True)
     _add("arcmin", angle, math.pi / 10800.0, kind="angle")
     _add("arcsec", angle, math.pi / 648000.0, kind="angle")
-    # rpm is revolutions per minute.  Angles are dimensionless in F²ORGE, so rpm is a plain
-    # 1/s *scale* (60 rpm = 1 rev/s), which keeps every 1/s conversion exact for phasors.
-    _add("rps", DIMLESS, 2 * math.pi, kind="angular velocity")
-    _add("rpm", DIMLESS, 2 * math.pi / 60, kind="angular velocity")
+    # rpm is revolutions per minute: an angular velocity, so it converts to rad/s (60 rpm = 2*pi
+    # rad/s) and never to a frequency like 1/s or Hz.
+    _add("rps", Dim.of(Angle=1, T=-1), 2 * math.pi, kind="angular velocity")
+    _add("rpm", Dim.of(Angle=1, T=-1), 2 * math.pi / 60, kind="angular velocity")
     _add("dB", Dim.of(Log=1), kind="logarithmic level")
+    _add("dBm", Dim.of(Log=1), kind="logarithmic level")  # level above 1 mW
     _add("Np", Dim.of(Log=1), math.log(10.0) / 2.0, kind="logarithmic level")  # 1 Np = 8.686 dB
     _add("%", DIMLESS, 0.01, kind="ratio", aliases=("percent", "pct"))
     _add("ppm", DIMLESS, 1e-6, kind="ratio")

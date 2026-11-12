@@ -153,7 +153,7 @@ class Parser:
                 return self.print_stmt()
             if kw == "plot":
                 return self.plot_stmt()
-            if kw in ("if", "for", "while", "def"):
+            if kw in ("if", "for", "while", "def", "fn"):
                 return self.block_statement()
             if kw in ("return", "break", "continue"):
                 return self.flow_statement()
@@ -419,12 +419,22 @@ class Parser:
     def solve_stmt(self):
         kw = self.next()
         eq = self.expect_ident("the name of the equation to solve")
+        equations = [(eq.text, Span(self.source, eq.start, eq.end))]
+        while self.is_op(","):  # solve Ohm, Power for I, R { ... }
+            self.next()
+            more = self.expect_ident("another equation name")
+            equations.append((more.text, Span(self.source, more.start, more.end)))
         t = self.peek()
         if not (t.kind == "ident" and t.text == "for"):
             self.fail("Expected 'for' and the variable to solve for", t,
                       f"Write: solve {eq.text} for x {{ ... }}")
         self.next()
         target = self.expect_ident("the variable to solve for")
+        unknowns = [(target.text, Span(self.source, target.start, target.end))]
+        while self.is_op(","):
+            self.next()
+            more = self.expect_ident("another unknown")
+            unknowns.append((more.text, Span(self.source, more.start, more.end)))
         self.skip_nl()
         self.expect_op("{", "Expected '{' to start the list of known values",
                        f"Write: solve {eq.text} for {target.text} {{ name = value }}")
@@ -444,8 +454,14 @@ class Parser:
             if not (t.kind == "nl" or (t.kind == "op" and t.text in ";,}")):
                 self.fail(f"Unexpected {self.describe(t)} in the list of known values", t)
         self.expect_op("}")
-        return S.Solve(eq.text, target.text, tuple(givens), self.span_from(kw.start),
-                       Span(self.source, eq.start, eq.end), Span(self.source, target.start, target.end))
+        span = self.span_from(kw.start)
+        if len(equations) > 1 or len(unknowns) > 1:
+            return S.SolveSystem(tuple(name for name, _ in equations),
+                                 tuple(name for name, _ in unknowns), tuple(givens), span,
+                                 tuple(item for _, item in equations),
+                                 tuple(item for _, item in unknowns))
+        return S.Solve(eq.text, target.text, tuple(givens), span,
+                       equations[0][1], unknowns[0][1])
 
     # ---- equation definitions --------------------------------------------------------------
     def eq_def(self):
@@ -849,10 +865,11 @@ class Parser:
     def index_items(self):
         """Index lists: `:` selects everything along that axis, `j:k` begins a counted selection."""
         indices = [self.index_item()]
+        count = self._count  # read before the next index clears it
         while self.is_op(","):
             self.next()
             indices.append(self.index_item())
-        return tuple(indices), self._count
+        return tuple(indices), count
 
     def index_item(self):
         self._count = None
@@ -999,10 +1016,28 @@ class Parser:
         return S.VectorLiteral(tuple(only.items), span)  # [1, 2] is the vector <1, 2>
 
     def number_or_quantity(self):
+        start = self.i  # the index of the number itself, before `next()` moves past it
         tok = self.next()
         nxt = self.peek()
+        # `0.5 1/s`: the token after the number is a `1` that begins an inverse unit.
+        raw = self.toks[start + 1] if start + 1 < len(self.toks) else None
+        slash = self.toks[start + 2] if start + 2 < len(self.toks) else None
+        if raw is not None and raw.kind == "num" and raw.text == "1" and slash is not None \
+                and slash.kind == "op" and slash.text == "/" and slash.start == raw.end:
+            # `0.5 1/s`: an inverse unit, such as a frequency or a rate constant, belongs to the
+            # number just as `0.5 m/s` does; the leading `1` is part of the unit.
+            self.next()  # the 1; the '/' then opens a denominator, as in 1/s
+            self.expect_op("/")
+            atoms = [(n, -e, sp) for n, e, sp in self.parse_unit_atoms(tight=True)]
+            return S.QuantityLit(tok.value, self.make_unit(atoms), self.span_from(tok.start))
         if nxt.kind == "ident" and nxt.text == "i":
             self.next()  # 3i, 2.5i: the imaginary part of a complex number
+            after = self.peek()
+            if after.kind == "ident" and after.text not in KEYWORDS and lookup_unit(after.text) is not None:
+                # 4i ohm: an imaginary quantity, which keeps the unit it was written in.
+                atoms = self.parse_unit_atoms(tight=True)
+                return S.QuantityLit(complex(0, tok.value), self.make_unit(atoms),
+                                     self.span_from(tok.start))
             return S.Number(complex(0, tok.value), Span(self.source, tok.start, nxt.end))
         if nxt.kind == "ident" and nxt.text not in KEYWORDS and nxt.text != "and":
             if nxt.text in ("in", "or", "not", "true", "false"):
