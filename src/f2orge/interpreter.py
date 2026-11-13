@@ -80,6 +80,7 @@ class Interpreter:
         self.equations: Dict[str, Equation] = {}
         self.functions: Dict[str, UserFunction] = {}
         self.worksheets: Dict[str, S.WorksheetDef] = {}
+        self.object_types: Dict[str, object] = {}  # user-defined `object` declarations
         self._worksheet_defaults: Dict[str, Dict[str, Quantity]] = {}
         self._frames: List[Dict[str, Value]] = []  # one entry per running function call
         self._loops = 0
@@ -87,6 +88,8 @@ class Interpreter:
         self.evaluator.equation_names = lambda: list(self.equations)
         self.evaluator.import_hint = self._import_hint
         self.evaluator.lookup_function = self.lookup_function
+        self.evaluator.lookup_object = self.object_types.get
+        self.evaluator.object_names = lambda: list(self.object_types)
         self.evaluator.interpreter = self
         self.evaluator.file_io = self._file_io
         self._dirs: List[Path] = [self.base_dir]
@@ -227,6 +230,21 @@ class Interpreter:
             self._loops = saved_loops
         return Quantity(0)
 
+    def _multi_assign(self, st: S.MultiAssign) -> None:
+        """`[a, b] = solveODE(...)`: bind the parts of a returned vector to the names."""
+        value = self.evaluator.eval(st.expr, self.scope())
+        if not isinstance(value, Vector):
+            raise ForgeError(
+                f"[{', '.join(st.names)}] needs a value with several parts, found {type(value).__name__.lower()}",
+                st.span, title="Cannot assign",
+                hint="Functions such as solveODE, spectrum, and bode return one vector of results.")
+        if len(value.items) != len(st.names):
+            raise ForgeError(
+                f"[{', '.join(st.names)}] names {len(st.names)} values but the result has "
+                f"{len(value.items)}", st.span, title="Cannot assign")
+        for name, item in zip(st.names, value.items):
+            self.assign(name, item)
+
     def lookup_function(self, name: str) -> Optional[UserFunction]:
         return self.functions.get(name)
 
@@ -269,6 +287,8 @@ class Interpreter:
             self.assign(st.name, value)
             if self.echo:
                 self.out(f"{st.name} = {value}")
+        elif isinstance(st, S.MultiAssign):
+            self._multi_assign(st)
         elif isinstance(st, S.ExprStmt):
             value = self.evaluator.eval(st.expr, self.scope())
             self.variables["ans"] = value
@@ -295,6 +315,8 @@ class Interpreter:
             self.equations[eq.name] = eq
         elif isinstance(st, S.WorksheetDef):
             self._define_worksheet(st)
+        elif isinstance(st, S.ObjectDef):
+            self._define_object(st)
         elif isinstance(st, S.SolveSystem):
             self._solve_system(st)
         elif isinstance(st, S.Solve):
@@ -328,6 +350,29 @@ class Interpreter:
             self.plotter(plot["title"], plot["xLabel"], plot["yLabel"], plot.get("points") or [])
         else:
             self.out(f"Plot: {summary}")
+
+    def _define_object(self, definition: S.ObjectDef) -> None:
+        """Register an `object` declaration, checking its defaults against the declared units."""
+        from .evaluator import Scope
+        from .objects import UserObjectType
+
+        kind = UserObjectType(definition)
+        # Defaults must be plain quantities of the right kind; they may use constants only.
+        for spec in definition.properties:
+            if spec.default is None:
+                continue  # required: leaving it out of `defaults` is what says so
+            value = self.evaluator.eval(spec.default, Scope({}, constants=True))
+            if not isinstance(value, Quantity):
+                raise ForgeError(f"default for '{spec.name}' must be a scalar quantity", spec.span,
+                                 title="Invalid object property")
+            if value.is_plain and not spec.unit.dim.is_dimensionless:
+                value = Quantity.from_unit(value.value, spec.unit)
+            if value.dim != spec.unit.dim:
+                raise UnitError(
+                    f"default for '{spec.name}' expects {spec.unit.symbol() or 'dimensionless'}",
+                    spec.span, title="Object unit mismatch")
+            kind.defaults[spec.name] = value.to(spec.unit)
+        self.object_types[kind.name] = kind
 
     def _define_worksheet(self, definition: S.WorksheetDef) -> None:
         """Register a worksheet declaration for the IDE."""

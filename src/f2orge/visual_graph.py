@@ -20,7 +20,10 @@ NODE_INPUTS = {
     "Multiply": 2,
     "Divide": 2,
     "Power": 2,
+    "Compare": 2,
+    "Call": 2,  # a minimum; `connect()` allows more argument pins on a Call node
     "Output": 1,
+    "Output2": 1,
 }
 NODE_SYMBOLS = {
     "Add": "+",
@@ -28,10 +31,43 @@ NODE_SYMBOLS = {
     "Multiply": "*",
     "Divide": "/",
     "Power": "^",
+    "Compare": "<=",
+    "Call": "f(x)",
 }
+# A Compare node's value is a comparison operator, or a magnitude comparison's function name.
+# `mag<` and `mag<=` compare sizes and ignore the kind of quantity, which is what a threshold
+# on a mixed graph needs; plain `<` stays unit-safe and refuses mismatched units.
+_COMPARISONS = {
+    "<": ("<", None), "<=": ("<=", None), ">": (">", None), ">=": (">=", None),
+    "==": ("==", None), "!=": ("!=", None),
+    "lt": ("<", None), "le": ("<=", None), "gt": (">", None), "ge": (">=", None),
+    "eq": ("==", None), "ne": ("!=", None),
+    "mag<": (None, "less_mag"), "mag<=": (None, "less_equal_mag"),
+    "mag>": (None, "greater_mag"), "mag>=": (None, "greater_equal_mag"),
+}
+_SHORT_NAMES = {"lt": "<", "le": "<=", "gt": ">", "ge": ">=", "eq": "==", "ne": "!="}
+
+
+def _comparison_value(text: str) -> str:
+    """The canonical spelling of a Compare node's value, or '' when it is not a comparison.
+
+    `le` becomes `<=` and `mag<=` stays as it is; either spelling means the same thing.
+    """
+    key = text.lower().replace(" ", "")
+    key = _SHORT_NAMES.get(key, key)
+    return key if key in _COMPARISONS else ""
 _IDENTIFIER = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 _KEYWORDS = {"eq", "import", "export", "solve", "convert", "print", "for"}
-_FUNCTIONS = {"sin", "cos", "tan", "asin", "acos", "atan", "exp", "ln", "log", "sqrt", "abs"}
+_FUNCTIONS = {
+    "sin", "cos", "tan", "asin", "acos", "atan", "exp", "ln", "log", "sqrt", "abs",
+    # The newer expressions a student reaches for, all of one argument.
+    "cross", "sum", "mean", "median", "std", "var", "percentile", "linreg", "det",
+    "transpose", "inverse", "real", "imag", "conj", "arg", "mag", "cbrt", "sign",
+    "fft", "ifft", "lowpass", "highpass", "db", "undb", "pH", "fromPH", "normalize",
+    "cumsum", "diff", "trapz", "ceil", "floor",
+}
+# Nodes whose value is text that must be a valid name, or a choice from a fixed set.
+_CALL_TARGETS = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 @dataclass
@@ -64,7 +100,15 @@ class VisualGraph:
             raise ForgeError("node positions must be finite numbers", title="Invalid visual node") from err
         if not isfinite(x_position) or not isfinite(y_position):
             raise ForgeError("node positions must be finite", title="Invalid visual node")
-        if kind in ("Input", "Output"):
+        if kind == "Output2":
+            names = [part.strip() for part in value.split(",")]
+            if len(names) < 2:
+                raise ForgeError("a two-output node needs at least two names, separated by commas",
+                                 title="Invalid visual node", hint="For example: time, velocity")
+            for name in names:
+                self._check_name(name, "output")
+            value = ", ".join(names)
+        elif kind in ("Input", "Output"):
             self._check_name(value, kind.lower())
         if kind == "Constant":
             if not isinstance(value, str) or not value.strip():
@@ -83,6 +127,23 @@ class VisualGraph:
                 title="Invalid visual node",
                 hint=f"Choose one of: {', '.join(sorted(_FUNCTIONS))}.",
             )
+        if kind == "Compare":
+            spelled = value.strip()
+            value = _comparison_value(spelled)
+            if not value:
+                raise ForgeError(
+                    f"'{spelled}' is not a comparison",
+                    title="Invalid visual node",
+                    hint="Use <, <=, >, >=, ==, != (or lt, le, gt, ge, eq, ne) to compare like kinds; "
+                         "mag<, mag<=, mag>, mag>= compare sizes and ignore units.",
+                )
+        if kind == "Call":
+            # A call node names a definition, which the script or equation must provide.
+            if not _CALL_TARGETS.fullmatch(value.strip()):
+                raise ForgeError(f"'{value}' is not a function or equation name",
+                                 title="Invalid visual node",
+                                 hint="Use a name such as area or Force.")
+
         default_height = 190 if kind == "Script" else max(88, 62 + NODE_INPUTS[kind] * 22)
         node = GraphNode(
             self._next_id, kind, value.strip(), x_position, y_position,
@@ -110,7 +171,8 @@ class VisualGraph:
             raise ForgeError("a node cannot connect to itself", title="Invalid connection")
         if source.kind in ("Output", "Script"):
             raise ForgeError(f"a {source.kind} node has no output pin", title="Invalid connection")
-        if not 0 <= input_index < NODE_INPUTS[target.kind]:
+        # A Call node takes as many arguments as the function it names, so its pins are open.
+        if target.kind != "Call" and not 0 <= input_index < NODE_INPUTS[target.kind]:
             raise ForgeError("the target node has no such input pin", title="Invalid connection")
         if self._would_cycle(source_id, target_id):
             raise ForgeError("this connection would create a cycle", title="Invalid connection")
@@ -141,7 +203,7 @@ class VisualGraph:
             )
 
     def compile(self) -> str:
-        outputs = [node for node in self.nodes.values() if node.kind == "Output"]
+        outputs = [node for node in self.nodes.values() if node.kind in ("Output", "Output2")]
         scripts = [node for node in self.nodes.values() if node.kind == "Script" and node.value.strip()]
         if not outputs and not scripts:
             raise ForgeError("add an Output or Script node", title="Cannot build visual graph")
@@ -163,6 +225,16 @@ class VisualGraph:
                     raise ForgeError(f"{node.value} node {node.id} needs an input connected",
                                      title="Incomplete visual graph")
                 result = f"{node.value}({expression(source_id)})"
+            elif node.kind == "Call":
+                # One input pin per argument, so `area(r)` uses one and `cross(a, b)` two.
+                arguments: List[str] = []
+                index = 0
+                while (node_id, index) in self.connections:
+                    arguments.append(expression(self.connections[(node_id, index)]))
+                    index += 1
+                # A Call node with no pins at all is a bare call, for a function that takes nothing:
+                # `pair()`.  A function that needs arguments simply fails when the program runs.
+                result = f"{node.value}({', '.join(arguments)})"
             elif node.kind in NODE_SYMBOLS:
                 inputs = []
                 for index in range(2):
@@ -173,8 +245,15 @@ class VisualGraph:
                             title="Incomplete visual graph",
                         )
                     inputs.append(expression(source_id))
-                result = f"({inputs[0]} {NODE_SYMBOLS[node.kind]} {inputs[1]})"
-            elif node.kind == "Output":
+                if node.kind == "Compare":
+                    operator, magnitude = _COMPARISONS[node.value]
+                    if magnitude is not None:
+                        result = f"{magnitude}({inputs[0]}, {inputs[1]})"
+                    else:
+                        result = f"({inputs[0]} {operator} {inputs[1]})"
+                else:
+                    result = f"({inputs[0]} {NODE_SYMBOLS[node.kind]} {inputs[1]})"
+            elif node.kind in ("Output", "Output2"):
                 raise ForgeError("Output nodes are statements, not values", title="Cannot build visual graph")
             else:
                 raise ForgeError(f"unsupported node type '{node.kind}'", title="Cannot build visual graph")
@@ -239,6 +318,13 @@ class VisualGraph:
         ]
         for node in ordered_outputs:
             source_id = self.connections[(node.id, 0)]
+            if node.kind == "Output2":
+                # A two-output node unpacks a function that returns several parts, such as
+                # solveODE or bode: `[t, v] = solveODE(...)`.
+                names = [part.strip() for part in node.value.split(",")]
+                lines.append(f"[{', '.join(names)}] = {expression(source_id)}")
+                lines.extend(names)
+                continue
             lines.extend((f"{node.value} = {expression(source_id)}", node.value))
         return "\n".join(lines)
 

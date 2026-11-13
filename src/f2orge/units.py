@@ -120,6 +120,8 @@ def _build() -> None:
     _add("Wb", Dim.of(L=2, M=1, T=-2, I=-1), prefix=True, kind="electrical")
     _add("T", Dim.of(M=1, T=-2, I=-1), prefix=True, kind="electrical")
     _add("mol", Dim.of(N=1), prefix=True, kind="amount")
+    # Battery capacity is charge: 1 Ah is 3600 coulombs.
+    _add("Ah", Dim.of(T=1, I=1), 3600.0, prefix=True, kind="electrical")
     # volume, speed, angle
     _add("L", Dim.of(L=3), 1e-3, prefix=True, kind="volume", aliases=("l",))
     _add("gal", Dim.of(L=3), 0.003785411784, kind="volume")

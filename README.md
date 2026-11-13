@@ -100,11 +100,15 @@ forge --help
 MATLAB-style workspace, script editor, command window, and complete Blueprint canvas. Install the
 desktop webview dependency with `pip install "f2orge[desktop]"`; Windows needs the Microsoft
 WebView2 runtime. The Blueprint tab uses a graph-paper grid: add
-Input, Constant, Function, arithmetic, Output, and Script nodes. Drag node headers to reposition;
-drag a node’s lower-right corner to resize it. Select a node and choose **Delete Node** (or press
-Delete) to remove it. Connect output pins to input pins. A Script node accepts arbitrary F²ORGE
-statements, so equations, imports, solves, conversions, prints, assignments, and expressions
-can all be authored in the Blueprint canvas. Script nodes run before generated Output nodes.
+Input, Constant, Function, Call, Compare, arithmetic, Output, two-output, and Script nodes. A
+**Call** node names a function or equation and takes one pin per argument, so `area(r)` uses one and
+`cross(a, b)` two; a **Compare** node applies `<`, `<=`, `>`, `>=`, `==`, or `!=`; and a **two-output**
+node unpacks a function that returns several parts, generating `[time, velocity] = solveODE(...)`.
+Drag node headers to reposition; drag a node’s lower-right corner to resize it. Select a node and
+choose **Delete Node** (or press Delete) to remove it. Connect output pins to input pins. A Script
+node accepts arbitrary F²ORGE statements, so equations, imports, solves, conversions, prints,
+assignments, and expressions can all be authored in the Blueprint canvas. Script nodes run before
+generated Output nodes.
 Input nodes reference workspace variables; an Input and Output sharing a name prompts for
 confirmation and orders dependent outputs automatically. Save and reopen `.fgraph` files.
 **Dark: On/Off** switches between light and a softer, lower-contrast dark palette. Pan the graph
@@ -362,6 +366,10 @@ not block a dependable language and solver.
 | Control flow (`if`/`elseif`/`else`, `for`, `while`, `break`, `continue`) and user functions (`def`, `fn`) | Implemented |
 | Script-level data files: `readtable()` and `csvwrite()` with unit-aware columns | Implemented |
 | Calculus: symbolic `diff()`, numeric `integrate`/`derivative`, `trapz()`, and `limit()` | Implemented |
+| Signal processing: `fft`, filtering, windows, and Bode/resonance data | Implemented |
+| Tracing and profiling: `forge trace`, `forge profile` | Implemented |
+| Blueprint nodes for calls, comparisons (including `mag<`), and unpacking several results | Implemented |
+| Domain objects: built-in `Rocket`, `Motor`, `Battery`, and custom `object` declarations | Implemented |
 | Differential equations: `solveODE()` (adaptive RK45, plottable time series) and `solvePDE()` (steady-state fields) | Implemented |
 | Optimisation: `fminsearch()` over several variables and `linprog()` for linear programs | Implemented |
 | CLI execution, interactive shell, local files, and explanatory source locations | Implemented |

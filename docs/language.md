@@ -150,6 +150,8 @@ number.
 | `exp(x)`, `ln(x)`, `log(x)`, `log2(x)`, `log(x, base)` | Exponential, natural, base-10, base-2, and general logs; the argument must be a plain number. |
 | `sqrt(x)`, `cbrt(x)` | Roots; unit exponents are halved or thirds and must remain representable. |
 | `abs(x)`, `sign(x)`, `floor(x)`, `ceil(x)`, `round(x, digits)` | Magnitude and rounding of a plain number. |
+| `compare_mag(a, b)` | Compare two quantities by size alone: `-1`, `0`, or `1`. Ignores the kind of quantity. |
+| `less_mag`, `less_equal_mag`, `greater_mag`, `greater_equal_mag` | Magnitude-only ordering, as booleans. |
 | `min(a, b, ...)`, `max(a, b, ...)`, `clamp(x, low, high)` | Select or bound compatible scalar quantities. |
 | `cross(a, b)` | Cross product of two length-3 vectors: torque, magnetic force, angular momentum. |
 | `transpose(A)`, `inverse(A)`, `det(A)` | Matrix operations; `inverse` needs a square matrix whose units factor into row and column dimensions. |
@@ -166,9 +168,16 @@ number.
 | `limit(x^2, 2)`, `limit(sin(x)/x, 0)` | The value an expression approaches; 0/0 shapes are resolved with l'Hôpital's rule. |
 | `solveODE(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)` and return `<times, values>`; adaptive Dormand-Prince 5. |
 | `solvePDE(grid)` | Relax a square grid of boundary values to steady state; plots as a heatmap. |
+| `fft(v)`, `ifft(v)`, `fftfreq(n, dt)` | Discrete Fourier transform, its inverse, and the frequency of each bin. |
+| `spectrum(v, dt, window)` | Window and transform in one step: returns `<frequencies, bins>`. |
+| `lowpass(v, cutoff, dt)`, `highpass(v, cutoff, dt)`, `bandpass(v, low, high, dt)` | FIR filters built from windowed-sinc Hamming kernels. |
+| `window(v, kind)`, `convolve(v, taps)` | Taper a signal (`hann`, `hamming`, `blackman`) or apply your own kernel. |
+| `bode(f, cutoff)`, `resonance(f, damping, cutoff)` | Gain and phase of a first- or second-order low-pass, for a Bode plot. |
 | `fminsearch(cost, start)` | Minimise a cost over several variables from a starting vector (Nelder-Mead). |
 | `linprog(cost, A, b, "max"\|"min")` | Optimise a linear objective under `A x <= b`, with non-negative x. |
-| `fzero(f, a, b)`, `minimize(f, a, b)` | A root inside a bracket, and the minimum (returns `<x, f(x)>`). |
+| `fzero(f, a, b)`, `minimize(f, a, b)` | A root inside a bracket, and a one-variable minimum (returns `<x, f(x)>`). |
+| `fminsearch(f, x0)` | Minimum of a function of several variables, starting from `x0`. |
+| `linprog(cost, A, b, sense)` | Linear program with `A x <= b` and `x >= 0`; `sense` is `"max"` (default) or `"min"`. |
 | `fminsearch(cost, start)` | Minimise a cost over several variables from a starting vector (Nelder-Mead). |
 | `linprog(cost, A, b, "max"\|"min")` | Optimise a linear objective under `A x <= b`, with non-negative x. |
 | `roots(<c, b, a>)` | Real roots of `c + b x + a x² + ...`, from the constant term upward. |
@@ -264,6 +273,24 @@ convert 3000 rpm -> rad/s  # 314.1592654 rad/s
 
 Built-in constants: `pi e g G R` (physics), `speedOfLight kB NA sigmaSB`, and the aerospace pack
 `muEarth rEarth rhoSL pSL TSL`. Your own variables may shadow them.
+
+### Comparing quantities
+
+`< <= > >=` compare two quantities of the same kind and refuse anything else, which is what catches
+`3 < 2 m`. When you knowingly want to compare *sizes* — a threshold on a graph, a scale limit — say
+so with a magnitude comparison:
+
+```forge
+compare_mag(3, 2 m)           # 1, because 3 is the larger number
+compare_mag(2 km, 1500 m)     # 1: 2000 vs 1500, so units are converted first
+less_mag(3, 2 m)              # false
+greater_equal_mag(5 s, 3 kg)  # true
+```
+
+`compare_mag` gives `-1`, `0`, or `1`, so it also sorts. The four boolean forms are `less_mag`,
+`less_equal_mag`, `greater_mag`, and `greater_equal_mag`. Complex values compare by magnitude; text
+and vectors are refused with an explanation. In the Blueprint, a Compare node set to `mag<=`,
+`mag<`, `mag>`, or `mag>=` generates the same calls.
 
 ## Conversion
 
@@ -425,6 +452,149 @@ csvwrite("reports/summary.csv", t)   # folders are created as needed
 * `forge browser`'s **Charts** tab reads the same `name [unit]` headers, so a file produced by
   `csvwrite()` opens there directly.
 
+## Solving and optimising
+
+`fzero(f, a, b)` finds a root inside a bracket (the two ends must have opposite signs), and
+`minimize(f, a, b)` finds a one-variable minimum. Both accept a function or a bare expression:
+
+```forge
+fzero(sin(x), 3, 4)              # 3.141592654
+def f(x) { return x^2 - 4 }
+fzero(f, 1 m, 3 m)               # 2 m
+minimize(x^2 + 1, -5, 5)         # <1.053671203e-08, 1>, the minimum near 0
+```
+
+`fminsearch(f, x0)` searches several variables at once and keeps their units, so a fit can be written
+with the measurements it fits:
+
+```forge
+def error(d, v) { return (d / 1 m - 5)^2 + (v / 1 m/s - 2)^2 }
+fminsearch(error, <0 m, 0 m/s>)  # <5 m, 2 m/s>
+```
+
+`linprog(cost, A, b)` maximises `cost x` subject to `A x <= b` and `x >= 0`; pass `"min"` as a fourth
+argument to minimise instead. The bounds may also ride in the last column of `A`:
+
+```forge
+linprog(<3, 2>, [[1, 1], [2, 1]], <4, 6>)        # <<2, 2>, 10>: x + y <= 4, 2x + y <= 6
+linprog(<3, 2>, [[1, 1, 4], [2, 1, 6]])          # the same problem, bounds in the matrix
+linprog(<2, 1>, [[1, 1]], <3>, "min")            # <<0, 0>, 0>
+```
+
+## Domain objects
+
+Three engineering objects are built in. Each bundles named quantities with the formulas that apply
+to them, and everything it returns is a quantity, so unit safety holds throughout.
+
+```forge
+r = Rocket(dryMass = 1200 kg, propellantMass = 2800 kg, isp = 311 s)
+r.wetMass                 # 4000 kg
+r.deltaV                  # 3671.958309 m/s, Tsiolkovsky's equation
+r.burnTime(50 kN)         # how long the propellant lasts at that thrust
+r.gravityLoss(60 s, 9.81 m/s^2)
+
+m = Motor(torque = 2.5 N*m, speed = 3000 rpm)
+m.power                   # 785.4 W
+m.torqueAt(1500 rpm)      # the torque at another speed, same power
+
+b = Battery(capacity = 5 Ah, voltage = 11.1 V)
+b.energy                  # 199800 J
+b.runtime(10 A)
+b.range(0.15 kWh/km)
+```
+
+Properties read like values and formulas with parameters are called: `r.deltaV` is a number,
+`r.burnTime(50 kN)` is a call. Arguments and defaults are unit-checked when the object is built.
+
+### Custom objects
+
+Declare your own type with `object`. A typed line is a **property** with a unit and optional default;
+a typed line with parentheses is a **formula** that states its result unit.
+
+```forge
+object Car {
+    description = "A simple electric car"
+    mass : kg = 1500 kg "kerb mass"
+    v : m/s = 20 m/s
+    energy() : J = 0.5 * mass * v^2 "kinetic energy"
+    distance(seconds : s) : m = v * seconds "how far it travels"
+}
+
+c = Car()                 # uses the defaults
+c.mass                    # 1500 kg
+c.energy                  # 300000 J
+c.distance(3 s)           # 60 m
+d = Car(mass = 900 kg)    # a 900 kg car; v keeps its default
+d.energy                  # 180000 J
+```
+
+* A property without `= default` must be given when the object is built; leaving it out says which
+  property is missing.
+* A property's default may use constants (`pi`, `g`) but not other properties.
+* Formulas see every property and every other formula, so `range` can use `energy`. A name that is
+  neither a property, a parameter, nor a formula is refused when the object is *declared*, not at run
+  time.
+* Declaring a result unit (`energy() : J`) checks the formula: a formula that produces momentum where
+  it promised a length is reported as a unit mismatch.
+* Parameter units (`seconds : s`) are documentation; they make the intended units clear, and the
+  result-unit check enforces the real contract.
+* Quoted text after a property or formula documents it, and `description = "..."` documents the type.
+
+Custom objects behave like the built-in ones: they appear in the IDE's **Objects** list with their
+properties and defaults, and `Car(...)` works anywhere an expression does.
+
+## Signals
+
+A signal is a vector of samples. `fft()` turns it into a spectrum, `fftfreq()` says which frequency
+each bin holds, and a filter works on the samples directly. Transforms accept any length: a power of
+two uses the fast radix-2 path, anything else a direct sum.
+
+```forge
+t = linspace(0 s, 1 s, 64)
+y = sin(2 * pi * 8 Hz * t)
+s = fft(y)
+f = fftfreq(64, 1 s / 64)
+mag(s[8])        # the 8 Hz line; a full-scale tone of 64 samples is about 32
+f[8]             # 8 Hz
+```
+
+Window first when a tone does not fall on an exact bin, or when you want one step:
+
+```forge
+[s2, f2] = spectrum(y, 1 s / 64, "hann")
+```
+
+Filters are finite-impulse-response kernels, so they are stable and easy to reason about. The
+time step sets the sample rate, and the Nyquist frequency is half of it:
+
+```forge
+clean = lowpass(y, 20 Hz, 1 s / 64)              # keep only what is below 20 Hz
+edges = highpass(y, 20 Hz, 1 s / 64)
+band = bandpass(y, 10 Hz, 30 Hz, 1 s / 64)
+convolve(y, <0.5, 0.5>)                         # your own two-tap average
+```
+
+Frequency response is returned as gain and phase, ready to plot:
+
+```forge
+frequencies = logspace(1, 4, 60)
+[gain, phase] = bode(frequencies, 100 Hz)        # 0.707 and -45 deg at the cutoff
+[peak, up] = resonance(frequencies, 0.1, 100 Hz) # Q = 5 at resonance
+plot(frequencies, gain)
+```
+
+### Assigning several results
+
+A function that returns a vector can be unpacked into several names with `[a, b] = ...`, which is
+shorter than indexing twice:
+
+```forge
+[gain, phase] = bode(frequencies, 100 Hz)
+[s, f] = spectrum(y, 1 s / 64)
+```
+
+The number of names must match the number of parts.
+
 ## Differential equations
 
 `solveODE(f, y0, t0, t1)` integrates `dy/dt = f(t, y)` from `t0` to `t1`, starting at `y0`, and
@@ -451,6 +621,28 @@ Decay and growth need a rate constant, which is an inverse unit:
 def dv(t, v) { return -0.5 1/s * v }
 r = solveODE(dv, 10 m/s, 0 s, 2 s)     # 10 e^-t, about 3.6788 m/s at t = 2 s
 ```
+
+### Steady-state fields
+
+`solvePDE(grid)` relaxes a square grid to steady state: every interior cell settles at the average
+of its four neighbours, while the edge values are held fixed as boundary conditions. That is
+Laplace's equation, which describes a heated plate, an electric potential in a conductor, and steady
+seepage alike.
+
+```forge
+grid = [[100 degC, 100 degC, 100 degC, 100 degC, 100 degC],
+        [0 degC, 0 degC, 0 degC, 0 degC, 0 degC],
+        [0 degC, 0 degC, 0 degC, 0 degC, 0 degC],
+        [0 degC, 0 degC, 0 degC, 0 degC, 0 degC],
+        [0 degC, 0 degC, 0 degC, 0 degC, 0 degC]]
+steady = solvePDE(grid)
+steady[2][2]                                # 25 °C, halfway into the plate
+plot(steady, kind = "heatmap")
+```
+
+The grid must be square and at least 3 cells across. The result keeps the grid's units, and it plots
+directly as a heatmap. A larger grid is more accurate but slower; pass a cell count as a second
+argument to override the grid's own size.
 
 ## Optimisation
 
@@ -496,7 +688,7 @@ plot(steady, kind = "heatmap")
 ```
 
 These are F²ORGE's own names, not MATLAB's: `solveODE` replaces `ode45` and `solvePDE` stands in
-for `pdepe`. MATLAB's `dsolve` solves equations symbolically, so this language uses a different word
+for `pdepe`. MATLAB's `solveODE` solves equations symbolically, so this language uses a different word
 to avoid suggesting a symbolic engine.
 
 ## Graph export
@@ -554,6 +746,39 @@ wheel/trackpad zoom, drag-to-pan, reset, and toggling individual curves:
 forge graph Force --vary a --from 0 --to 20 --curve "m=50 kg" --curve "m=100 kg" --interactive
 ```
 
+## Tracing and profiling
+
+`forge trace FILE.forge` runs a program statement by statement and prints each one as it executes,
+with its line and its kind, so a script's real path through its branches and loops is visible:
+
+```text
+   1  assignment  total = 0
+   2  for         for k in 1..4 {
+   3  assignment  total = total + k
+   5  if          if total > 5 {
+   6  print       print "big"
+  10  expression  total
+7 statements ran
+```
+
+Show only one kind of statement with `--kind`, for example `--kind print`.
+
+`forge profile FILE.forge` reports where the time goes, one row per source line, busiest first.
+Each line's count is how many times it actually ran, so a hot loop is obvious. Use `--runs 10` to
+repeat a short program enough for the times to mean something:
+
+```text
+        ms     calls  line
+      0.04         4     3  total = total + k
+      0.01         1     1  total = 0
+      0.45  total
+```
+
+The same facilities are available from Python, which is how the IDEs drive them:
+`DebugSession` steps, holds breakpoints, and exposes the current line and variables;
+`trace_of()` returns the frames a program ran; and `profile()` returns per-line times and call
+counts plus a report.
+
 ## Calculator export
 
 Generate a standalone HTML calculator from a callable equation:
@@ -584,7 +809,7 @@ window runs expressions and assignments in the same session, with Up/Down comman
 in a script opens its graph after the run. `:clear` resets the
 workspace. The IDE serves its bundled UI on loopback and runs locally without an internet connection.
 The **Blueprint** tab provides a graph-paper canvas with Input, Constant,
-Function, arithmetic, Script, and Output nodes. Connect output pins to input pins, then select **Run Graph**
+Function, Call, Compare, arithmetic, Script, Output, and two-output nodes. Connect output pins to input pins, then select **Run Graph**
 to compile the visual flow into F²ORGE statements and execute it in the shared workspace. Input
 nodes refer to variables already present in the workspace; Constant nodes accept F²ORGE
 expressions. Drag node headers to reposition and the lower-right corner to resize; double-click a

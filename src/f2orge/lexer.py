@@ -21,7 +21,7 @@ _WORD_EXTRA = "_µΩ°"
 
 KEYWORDS = {
     "eq", "import", "export", "solve", "convert", "print", "for", "plot",
-    "worksheet", "input", "output", "graph", "over", "from", "to",
+    "worksheet", "input", "output", "graph", "over", "from", "to", "object",
     "if", "elseif", "else", "while", "def", "fn", "return", "break", "continue",
     # 'in', 'and', 'or', 'not', 'true', 'false', and 'i' are ordinary words: they are only
     # keywords where a grammar position makes them so (for k in ..., 2 in v, a and b).

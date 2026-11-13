@@ -155,6 +155,35 @@ r = solveODE(dv, 10 m/s, 0 s, 2 s)
 **Think about it:** why does the acceleration not need to mention `t` or `v`? What would `solveODE`
 do with `-9.81 m/s^2` swapped for `-9.81 m/s^3 * t`?
 
+## Lesson 5c — Bundle a model into an object
+
+When a model has several values and formulas that belong together, declare your own object:
+
+```forge
+object Car {
+    description = "A simple electric car"
+    mass : kg = 1500 kg "kerb mass"
+    v : m/s = 20 m/s
+    energy() : J = 0.5 * mass * v^2 "kinetic energy"
+    distance(seconds : s) : m = v * seconds
+}
+
+c = Car()
+c.energy                # 300000 J
+d = Car(mass = 900 kg)
+d.energy                # 180000 J, the same speed with less mass
+c.distance(3 s)         # 60 m
+```
+
+A line with a unit is a property (`mass : kg = 1500 kg`); a line with parentheses is a formula
+(`energy() : J = ...`). The stated result unit is a promise the checker keeps: if `distance`
+produced momentum instead of a length, you would get a unit error rather than a wrong answer.
+`Rocket`, `Motor`, and `Battery` are built-in objects that work the same way — try
+`Rocket(dryMass = 1200 kg, propellantMass = 2800 kg, isp = 311 s).deltaV`.
+
+The **Objects** list in the IDE shows every object your program declares, with its properties and
+defaults, so you can see what a type needs before you build one.
+
 ## Lesson 6 — Plot an equation sweep
 
 The graph command evaluates a callable equation repeatedly across a range:

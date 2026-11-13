@@ -42,7 +42,30 @@ def _workspace(session: DesktopSession) -> Dict[str, object]:
         session.interpreter.worksheet_schema(name)
         for name in sorted(session.interpreter.worksheets)
     ]
-    return {"variables": variables, "equations": equations, "worksheets": worksheets}
+    objects = []
+    for type_name, kind in sorted(session.interpreter.object_types.items()):
+        properties = []
+        for prop in kind.properties.values():
+            given = kind.defaults.get(prop.name)
+            properties.append({
+                "name": prop.name,
+                "unit": prop.unit.symbol() or "dimensionless",
+                "required": given is None,
+                "default": str(given) if given is not None else "",
+                "doc": prop.doc,
+            })
+        objects.append({
+            "name": type_name,
+            "description": kind.doc,
+            "properties": properties,
+            "formulas": [
+                {"name": formula.name, "params": list(formula.params), "doc": formula.doc}
+                for formula in kind.formulas.values()
+            ],
+            "fields": kind.describe(),
+        })
+    return {"variables": variables, "equations": equations, "worksheets": worksheets,
+            "objects": objects}
 
 
 def _handler(session: DesktopSession):

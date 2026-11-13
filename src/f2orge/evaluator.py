@@ -27,6 +27,8 @@ from .linear_algebra import (
     solve_linear, standard_deviation, subtract as subtract_linear, transpose, variance,
 )
 from .mathlib import adaptive_simpson, bisect, golden
+from .objects import BoundFormula as _UserFormula
+from .objects import _Computed as _ComputedFormula
 from .printer import format_expr
 from .quantity import Quantity, format_number
 from .text import Text, as_text
@@ -35,6 +37,7 @@ from .units import lookup_unit, unit_named, Unit
 Scalar = Union[Quantity, Text]
 
 MOLAR = Unit.from_atoms([("mol", Fraction(1)), ("L", Fraction(-1))])  # the unit pH is defined on
+_DEGREES = Unit.from_atoms([("deg", Fraction(1))])  # phase is reported in degrees
 
 
 class UndefinedVariable(ForgeNameError):
@@ -150,11 +153,16 @@ ARITY = {
     "linspace": (3, 3), "logspace": (2, 3), "range": (1, 3), "sort": (1, 2), "select": (2, 2),
     "concat": (1, 99), "size": (1, 1), "reshape": (3, 3),
     "db": (1, 1), "undb": (1, 1), "dbm": (1, 1), "pH": (1, 1), "fromPH": (1, 1),
+    "compare_mag": (2, 2), "less_mag": (2, 2), "less_equal_mag": (2, 2),
+    "greater_mag": (2, 2), "greater_equal_mag": (2, 2),
     "real": (1, 1), "imag": (1, 1), "conj": (1, 1), "arg": (1, 1), "mag": (1, 1),
     "format": (1, 99), "text": (1, 1), "char": (1, 1), "ascii": (1, 1), "upper": (1, 1), "lower": (1, 1),
     "integrate": (2, 4), "derivative": (2, 2), "roots": (1, 1), "fzero": (2, 3), "minimize": (2, 3),
     "surface": (3, 3), "readtable": (1, 1), "csvwrite": (2, 2), "limit": (2, 2), "solveODE": (4, 4),
-    "solvePDE": (1, 3), "fminsearch": (2, 2), "linprog": (2, 4),
+    "solvePDE": (1, 3),
+    "fft": (1, 1), "ifft": (1, 1), "fftfreq": (2, 2), "convolve": (2, 2),
+    "lowpass": (3, 3), "highpass": (3, 3), "bandpass": (4, 4), "window": (2, 2),
+    "bode": (2, 2), "resonance": (3, 3), "spectrum": (2, 3), "fminsearch": (2, 2), "linprog": (2, 4),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -176,6 +184,8 @@ class Evaluator:
         self.function_names: Callable[[], List[str]] = lambda: []
         self.interpreter: Optional[object] = None  # set by the Interpreter; runs user functions
         self.file_io: Callable[[str, list, object], object] = _no_file_io
+        self.lookup_object: Callable[[str], Optional[object]] = lambda _name: None
+        self.object_names: Callable[[], List[str]] = lambda: []
 
     # ---- entry point -----------------------------------------------------------------------
     def eval(self, node, scope: Scope):
@@ -199,6 +209,8 @@ class Evaluator:
             if node.name in BOOLEANS:
                 return BOOLEANS[node.name]
             value = scope.get(node.name)
+            if isinstance(value, _ComputedFormula):
+                return value.resolve(self)
             if value is None:
                 function = self.lookup_function(node.name)
                 if function is not None:
@@ -243,19 +255,57 @@ class Evaluator:
                     return Matrix(tuple(tuple(item.items) for item in results))
             raise ForgeEvalError("a selection such as M[i, j] must pick one value", node.span,
                                  hint="Use M[i] for a row, or M[:, j:j+n] for a block.")
+        if isinstance(node, S.MethodCall):
+            from .objects import UserObject
+
+            target = self.eval(node.obj, scope)
+            raw = target.get(node.attr) if hasattr(target, "get") else None
+            args = [self.eval(arg, scope) for arg in node.args]
+            if isinstance(target, UserObject) and isinstance(raw, _UserFormula):
+                if not raw.formula.params:
+                    raise ForgeEvalError(f"{node.attr} is a value, not a formula to call", node.span,
+                                         hint=f"Read it as {node.attr} without brackets.")
+                return target.evaluate(raw.formula, args, self, node.span, dict(node.kwargs) or None)
+            formula = self._domain_member(target, node.attr, node.span)
+            if not callable(formula):
+                raise ForgeEvalError(f"{node.attr} is a value, not a formula to call", node.span,
+                                     hint=f"Read it as {node.attr} without brackets.")
+            if node.kwargs:
+                raise ForgeSyntaxError("a domain formula takes plain values, not name = value pairs",
+                                       node.span)
+            return formula(*args)
         if isinstance(node, S.Member):
-            if isinstance(node.obj, S.Call) and node.obj.func not in ARITY:
+            from .domains import DomainObject
+            from .objects import UserObject
+
+            if isinstance(node.obj, S.Call) and node.obj.func not in ARITY \
+                    and node.obj.func not in DOMAIN_NAMES \
+                    and self.lookup_object(node.obj.func) is None:
                 eq, values = self.call_equation(node.obj, scope)
                 if node.attr not in values:
                     raise ForgeNameError(
                         f"{eq.name} has no output named '{node.attr}'", node.span,
                         hint=f"Its outputs are: {', '.join(eq.outputs)}")
                 return values[node.attr]
+            if isinstance(node.obj, S.Call) and node.obj.func in DOMAIN_NAMES:
+                # `Rocket(...).deltaV` reads the new object directly.
+                return self._domain_member(self._construct_domain(node.obj.func, node.obj, scope),
+                                           node.attr, node.span)
+            if isinstance(node.obj, S.Call) and self.lookup_object(node.obj.func) is not None:
+                return self._domain_member(
+                    self._construct_user_object(self.lookup_object(node.obj.func), node.obj, scope),
+                    node.attr, node.span)
             if isinstance(node.obj, S.Call):
                 raise ForgeSyntaxError(f"{node.obj.func}() does not have a named part '{node.attr}'", node.span)
             target = self.eval(node.obj, scope)
+            if isinstance(target, (DomainObject, UserObject)):
+                return self._domain_member(target, node.attr, node.span)
             if isinstance(target, Matrix) and node.attr == "T":
                 return transpose(target)
+            if isinstance(target, Matrix) and hasattr(target, node.attr) and node.attr in (
+                    "rows", "shape"):
+                return target.rows if node.attr == "rows" else Vector(
+                    tuple(Quantity(n) for n in target.shape))
             raise ForgeSyntaxError("Only the result of an equation call has named outputs", node.span,
                                    hint="For example: Force(m = 2 kg, a = 3 m/s^2).F")
         raise TypeError(f"cannot evaluate {node!r}")  # pragma: no cover
@@ -278,16 +328,24 @@ class Evaluator:
             return add_linear(left, right)
         if op == "-":
             return subtract_linear(left, right)
-        if op in ("*", "*."):
+        if op == "*":
             return multiply_linear(left, right)
+        if op == ".*":
+            return elementwise(left, right, "*")
         if op == "/":
             return divide_linear(left, right)
-        if op == "/.":
+        if op == "./":
             return elementwise(left, right, "/")
         if not isinstance(left, Quantity) or not isinstance(right, Quantity):
             if isinstance(left, Text) or isinstance(right, Text):
                 raise ForgeEvalError("cannot raise text to a power", node.span)
-            raise ForgeEvalError("vectors and matrices cannot be raised to a power", node.span)
+            if isinstance(left, Vector) and isinstance(right, Quantity):
+                # `v^2` raises each element, which is how a signal's power is written.
+                return Vector(tuple(item ** right for item in left.items))
+            if isinstance(left, Matrix) and isinstance(right, Quantity):
+                return Matrix(tuple(tuple(item ** right for item in row) for row in left.rows))
+            raise ForgeEvalError("matrices cannot be raised to a power; use .* for element by element",
+                                 node.span)
         return left ** right
 
     def loop_values(self, node, scope: Scope) -> List[Value]:
@@ -327,8 +385,55 @@ class Evaluator:
         return UndefinedVariable(f"'{name}' is not defined", span, hint=" ".join(parts) or None)
 
     # ---- calls -----------------------------------------------------------------------------
+    # ---- domain objects --------------------------------------------------------------------
+    def _construct_domain(self, name: str, node: S.Call, scope: Scope):
+        """`Rocket(dryMass = 1200 kg, ...)`: build a domain object from named quantities."""
+        from .domains import DOMAINS
+
+        if node.args:
+            raise ForgeSyntaxError(f"{name}() needs named values such as dryMass = 1200 kg", node.span,
+                                   hint=f"Write: {name}({' = ..., '.join(DOMAINS[name].PROPERTIES)} = ...)")
+        values = {key: self.eval(expr, scope) for key, expr, _ in node.kwargs}
+        try:
+            return DOMAINS[name](**values)
+        except ForgeError as err:
+            if err.span is None:
+                err.span = node.span
+            raise
+
+    def _construct_user_object(self, kind, node: S.Call, scope: Scope):
+        """`Car(mass = 1200 kg)`: build one of the program's own object types."""
+        if node.args:
+            raise ForgeSyntaxError(f"{kind.name}() needs named values such as "
+                                   f"{kind.properties and list(kind.properties)[0]} = ...", node.span)
+        values = {key: self.eval(expr, scope) for key, expr, _ in node.kwargs}
+        try:
+            return kind.build(values, node.span)
+        except ForgeError as err:
+            if err.span is None:
+                err.span = node.span
+            raise
+
+    def _domain_member(self, target, attr: str, span):
+        """`rocket.deltaV`, or `rocket.burnTime(thrust)` when the member is a formula."""
+        try:
+            value = target.get(attr)
+        except ForgeError as err:
+            if err.span is None:
+                err.span = span
+            raise
+        # A user formula with no parameters is a value; evaluate it now.
+        if isinstance(value, _UserFormula) and not value.formula.params:
+            return value.value(self)
+        return value
+
     def call(self, node: S.Call, scope: Scope):
         name = node.func
+        if name in DOMAIN_NAMES:
+            return self._construct_domain(name, node, scope)
+        kind = self.lookup_object(name)
+        if kind is not None:
+            return self._construct_user_object(kind, node, scope)
         if name in ARITY:
             return self._call_function(node, scope)
         function = self.lookup_function(name)
@@ -478,16 +583,23 @@ class Evaluator:
         return GridFunction(node, self, scope, free).call
 
     def _linprog(self, node: S.Call, scope: Scope):
-        """linprog(cost, constraints, bounds): maximise a linear objective for non-negative x.
+        """linprog(cost, constraints, bounds, sense): a linear program for non-negative x.
 
-        `constraints` is a matrix whose rows hold coefficients and `bounds` the right-hand sides
-        of `sum(a_i x_i) <= b`.  The optional third argument is "max" (the default) or "min".
+        `constraints` is a matrix whose rows hold coefficients, and `bounds` the right-hand sides of
+        `sum(a_i x_i) <= b`.  The bounds may also be the last column of the matrix.  `sense` is
+        "max" (the default) or "min".
         """
         from .mathlib import simplex_linear
 
         objective = self.eval(node.args[0], scope)
         matrix = self.eval(node.args[1], scope)
-        bounds = self.eval(node.args[2], scope) if len(node.args) > 2 else None
+        bounds = None
+        sense_position = 2  # `linprog(cost, A, bounds, sense)` unless the bounds ride in A
+        if len(node.args) > 2:
+            third = self.eval(node.args[2], scope)
+            if isinstance(third, Vector):
+                bounds = third
+                sense_position = 3
         if isinstance(matrix, Matrix) and bounds is None:
             bounds = Vector(tuple(row[-1] for row in matrix.rows))
             matrix = Matrix(tuple(row[:-1] for row in matrix.rows))
@@ -496,8 +608,10 @@ class Evaluator:
             raise ForgeEvalError("linprog() needs a cost vector, a constraint matrix, and bounds",
                                  node.span, hint='Write: linprog(<3, 2>, [[1, 1], [2, 1]], <4, 6>)')
         sense = "max"
-        if len(node.args) > 3:
-            sense = as_text(self.eval(node.args[3], scope))
+        if len(node.args) > sense_position:
+            sense = as_text(self.eval(node.args[sense_position], scope))
+            if sense not in ("max", "min"):
+                raise ForgeEvalError('linprog() needs "max" or "min" as its direction', node.span)
         coefficients = [_scalar_in(item, "linprog") for item in objective.items]
         rows = [[_scalar_in(item, "linprog") for item in row] for row in matrix.rows]
         limits = [_scalar_in(item, "linprog") for item in bounds.items]
@@ -568,10 +682,29 @@ class Evaluator:
         A name or a call is evaluated as usual.  Anything else is a bare expression such as `x^2`,
         which becomes a function of the variable the limits are written in.
         """
-        if isinstance(node, (S.Name, S.Call)) and not (
-                isinstance(node, S.Name) and node.name == "x" and scope.get("x") is None):
-            return self.eval(node, scope)
+        if isinstance(node, S.Name) and scope.get(node.name) is None \
+                and self._is_calculus_variable(node.name) \
+                and self.lookup_function(node.name) is None and self.lookup_equation(node.name) is None \
+                and self.lookup_object(node.name) is None:
+            return PartialFunction(node, self, scope, "expression")  # a bare variable such as x
+        if isinstance(node, S.Call) and node.func not in ARITY \
+                and self.lookup_function(node.func) is None and self.lookup_equation(node.func) is None:
+            return self.eval(node, scope)  # a call of a user function or an equation
+        if isinstance(node, S.Call) and any(
+                self._is_calculus_variable(n) and scope.get(n) is None for n in S.names_in(node)):
+            # `sin(x)`: a call that mentions an undefined variable is an expression of that variable.
+            return PartialFunction(node, self, scope, "expression")
+        if isinstance(node, (S.Name, S.Call)):
+            return self.eval(node, scope)  # a value, a user function, or an equation
         return PartialFunction(node, self, scope, "expression")
+
+    def _is_calculus_variable(self, name: str) -> bool:
+        """A name that is not a built-in, so it names the variable of an expression.
+
+        A user function or equation keeps its own meaning (`integrate(f, ...)` passes `f`); only a
+        name with no other role can be the x in `sin(x)`.
+        """
+        return name not in ARITY and name not in ("true", "false", "and", "or", "not")
 
     def _as_numeric_function(self, value, scope: Scope, span, what: str,
                              arity: int = 1) -> Callable[..., float]:
@@ -639,17 +772,22 @@ class Evaluator:
             return _real_roots(numeric_items(lines, "roots"), span)
         if name == "integrate":
             from_node, to_node = node.args[1], node.args[2]
+        elif name == "derivative":
+            from_node = to_node = node.args[1]
+        else:  # fzero, minimize
+            from_node = node.args[1]
+            to_node = node.args[2] if len(node.args) > 2 else from_node
+        # Resolve the function before the bounds are evaluated: with a bare expression such as
+        # `sin(x)` the bounds are the only place the variable's name appears.
+        function = _resolve_function(self.callback_function(node.args[0], scope), (from_node, to_node))
+        if name == "integrate":
             a, b = self.eval(from_node, scope), self.eval(to_node, scope)
             if len(node.args) > 3:
                 tolerance = self.eval(node.args[3], scope)
         elif name == "derivative":
-            from_node = to_node = node.args[1]
             a = b = self.eval(from_node, scope)
-        else:  # fzero, minimize
-            from_node = node.args[1]
-            to_node = node.args[2] if len(node.args) > 2 else from_node
+        else:
             a, b = self.eval(from_node, scope), self.eval(to_node, scope)
-        function = _resolve_function(self.callback_function(node.args[0], scope), (from_node, to_node))
         numeric = self._as_numeric_function(function, scope, span, f"{name}()")
         unit = _function_unit(function)
         if name == "integrate":
@@ -699,13 +837,20 @@ class Evaluator:
 
 
 def _resolve_function(value, limit_nodes):
-    """`integrate(t^2, 0, 1)`: a bare expression is a function of the variable used in the limits."""
-    if isinstance(value, PartialFunction):
+    """`integrate(t^2, 0, 1)`: a bare expression is a function of the variable used in the limits.
+
+    The limits name the variable when they mention it (`t^2` with bounds 0 and 1 leaves only the
+    expression itself); otherwise the expression's own single free name is the variable, and `x`
+    is the conventional choice when there is none.
+    """
+    if isinstance(value, PartialFunction) and not isinstance(value, FunctionReference):
         names = set(S.names_in(value.expression))
         for node in limit_nodes:
             for name in S.names_in(node):
                 if name in names:
                     return value.with_variable(name)
+        free = [name for name in names if value.scope.get(name) is None]
+        return value.with_variable(free[0] if free else "x")
     return value
 
 
@@ -722,8 +867,9 @@ def _function_dim(function, at: Quantity, numeric, scope) -> Dim:
     """The dimension f(x) has when x is measured like `at`, so `x^2` over metres is an area."""
     from .dimensions import Dim
 
-    if hasattr(function, "variable"):
-        # A bare expression is evaluated at a quantity, which gives its terms units.
+    # Call it once with a quantity: `x^2` over metres is then an area, and a user function built
+    # from the same expression behaves the same way.
+    if hasattr(function, "call"):
         try:
             result = function.call(Quantity(1.0, at.dim))
         except ForgeError:
@@ -808,6 +954,9 @@ COMPARISONS = ("==", "!=", "<=", ">=", "<", ">")
 CALLBACK_FUNCTIONS = frozenset({"integrate", "derivative", "roots", "fzero", "minimize", "surface",
                                "limit", "solveODE", "solvePDE", "fminsearch", "linprog"})
 FILE_FUNCTIONS = frozenset({"readtable", "csvwrite"})
+DOMAIN_NAMES = frozenset({"Rocket", "Motor", "Battery"})
+SIGNAL_FUNCTIONS = frozenset({"fft", "ifft", "fftfreq", "convolve", "lowpass", "highpass",
+                             "bandpass", "window", "bode", "resonance", "spectrum"})
 
 
 def _is_symbolic(node, scope: Scope) -> bool:
@@ -846,6 +995,35 @@ def compare(left, right, op: str, span=None):
                              hint="Compare magnitudes with abs(), or parts with real() and imag().")
     a, b = left.value, right.value
     return {"<": a < b, ">": a > b, "<=": a <= b, ">=": a >= b}[op]
+
+
+MAGNITUDE_COMPARISONS = {
+    "compare_mag": lambda a, b: (a > b) - (a < b),  # -1, 0, or 1
+    "less_mag": lambda a, b: a < b,
+    "less_equal_mag": lambda a, b: a <= b,
+    "greater_mag": lambda a, b: a > b,
+    "greater_equal_mag": lambda a, b: a >= b,
+}
+
+
+def compare_magnitudes(name: str, left, right, span=None):
+    """Compare two quantities by size alone, ignoring the kind of quantity they measure.
+
+    `compare_mag(3, 2 m)` is 1 because 3 is the larger number, which is what a graph or a scale
+    needs; `<` would refuse it for mixing a plain number with a length.  Units are still converted
+    first: `2 km` against `1500 m` compares 2000 with 1500, not 2 with 1500.
+    """
+    for value, label in ((left, "first"), (right, "second")):
+        if not isinstance(value, Quantity):
+            if isinstance(value, (Text, Vector, Matrix)):
+                raise ForgeEvalError(f"{name}() needs two numbers, found {_describe(value)}", span,
+                                     hint="Compare text with == or !=, and vectors element by element.")
+            raise ForgeEvalError(f"{name}() needs two numbers for its {label} value", span)
+    if left.is_complex or right.is_complex:
+        a, b = abs(complex(left.value)), abs(complex(right.value))
+    else:
+        a, b = left.value, right.value
+    return MAGNITUDE_COMPARISONS[name](a, b)
 
 
 def _equal(left, right) -> bool:
@@ -903,7 +1081,20 @@ def _angle(q: Quantity, fname: str) -> float:
     return q.value
 
 
+ELEMENTWISE = frozenset({
+    "sin", "cos", "tan", "asin", "acos", "atan", "exp", "ln", "log", "log2", "sqrt", "cbrt",
+    "abs", "floor", "ceil", "round", "sign",
+})
+
+
 def _apply(name: str, args: List[object]):
+    if name in MAGNITUDE_COMPARISONS:
+        return compare_magnitudes(name, args[0], args[1])
+    if name in ELEMENTWISE and args and isinstance(args[0], Vector):
+        # sin(v), sqrt(v), abs(v): apply the function to every element, keeping element units.
+        if any(isinstance(item, (Vector, Text)) for item in args[0].items):
+            raise ForgeEvalError(f"{name}() needs numbers, found text or rows")
+        return Vector(tuple(_apply(name, [item] + list(args[1:])) for item in args[0].items))
     if name == "format":
         return Text("".join(as_text(arg) for arg in args))
     if name == "text":
@@ -992,6 +1183,8 @@ def _apply(name: str, args: List[object]):
         slope.unit = None
         intercept.unit = None
         return Vector((slope, intercept, Quantity(r_squared)))
+    if name in SIGNAL_FUNCTIONS:
+        return _signal(name, args)
     if name == "trapz":
         return _trapz(args)
     if name == "diff":
@@ -1196,6 +1389,84 @@ def _items(value, fname: str) -> List[Element]:
 
 def sorted_items(items: List[Element], order: str) -> List[Element]:
     return ascending_all(items) if order == "asc" else descending_all(items)
+
+
+def _samples(args, index: int, fname: str) -> List[float]:
+    """One argument as plain sample values, which is what transforms and filters work on."""
+    values = numeric_items(args[index], fname)
+    if isinstance(args[index], Matrix):
+        raise ForgeEvalError(f"{fname}() needs a vector of samples, not a matrix")
+    if any(value.is_complex for value in values):
+        raise ForgeEvalError(f"{fname}() needs real samples")
+    return [value.value for value in values]
+
+
+def _signal(name: str, args) -> object:
+    from . import signals
+
+    if name in ("fft", "ifft"):
+        values = numeric_items(args[0], name)
+        if not values:
+            raise ForgeEvalError(f"{name}() needs at least one sample")
+        dim = values[0].dim
+        transformed = signals.fft([value.value for value in values]) if name == "fft" \
+            else signals.ifft([value.value for value in values])
+        return Vector(tuple(Quantity(value, dim) for value in transformed))
+    if name == "fftfreq":
+        count = _plain_integer(args[0], "fftfreq() sample count")
+        spacing = _scalar_in(args[1], "fftfreq")
+        if not spacing.dim.is_dimensionless and spacing.dim != Unit.from_atoms([("s", 1)]).dim:
+            raise UnitError("fftfreq() needs the sample spacing as a time", hint="Write 1 ms or 0.001 s.")
+        if spacing.value == 0:
+            raise ForgeEvalError("fftfreq() needs a non-zero sample spacing")
+        rates = signals.frequencies(count, spacing)
+        return Vector(tuple(Quantity(rate.value, rate.dim, Unit.from_atoms([("Hz", 1)])) for rate in rates))
+    if name == "spectrum":
+        values = numeric_items(args[0], name)
+        spacing = _scalar_in(args[1], "spectrum")
+        kind = as_text(args[2]) if len(args) > 2 else "none"
+        raw = signals.window([value.value for value in values], kind)
+        bins = signals.fft(raw)
+        rates = signals.frequencies(len(bins), spacing)
+        return Vector((Vector(tuple(Quantity(rate.value, rate.dim, Unit.from_atoms([("Hz", 1)]))
+                                    for rate in rates)),
+                       Vector(tuple(Quantity(value, values[0].dim) for value in bins))))
+    if name in ("lowpass", "highpass", "bandpass"):
+        samples = _samples(args, 0, name)
+        rate = _scalar_in(args[-1], name)
+        sample_hz = 1.0 / rate.value if rate.value else 0.0
+        if sample_hz <= 0:
+            raise ForgeEvalError(f"{name}() needs a positive sample spacing")
+        if name == "bandpass":
+            taps = signals.bandpass_taps(args[1].value, args[2].value, sample_hz)
+        else:
+            cutoff = _scalar_in(args[1], name).value
+            taps = (signals.lowpass_taps if name == "lowpass" else signals.highpass_taps)(
+                cutoff, sample_hz)
+        filtered = signals.convolve(samples, taps)
+        dim = numeric_items(args[0], name)[0].dim
+        unit = numeric_items(args[0], name)[0].unit
+        return Vector(tuple(Quantity(value, dim, unit) for value in filtered))
+    if name == "window":
+        samples = _samples(args, 0, name)
+        shaped = signals.window(samples, as_text(args[1]))
+        dim = numeric_items(args[0], name)[0].dim
+        return Vector(tuple(Quantity(value, dim) for value in shaped))
+    if name == "convolve":
+        samples = _samples(args, 0, name)
+        taps = _samples(args, 1, name)
+        return Vector(tuple(Quantity(value) for value in signals.convolve(samples, taps)))
+    frequencies = numeric_items(args[0], name)
+    if name == "bode":
+        cutoff = _scalar_in(args[1], name).value
+        pairs = signals.first_order_response(cutoff, [value.value for value in frequencies])
+        return Vector((Vector(tuple(Quantity(gain) for gain, _ in pairs)),
+                       Vector(tuple(Quantity.from_unit(phase, _DEGREES) for _, phase in pairs))))
+    damping = _dimless(_scalar_in(args[1], name), name)
+    cutoff = _scalar_in(args[2], name).value
+    pairs = signals.second_order_response(cutoff, damping, [value.value for value in frequencies])
+    return Vector((Vector(tuple(Quantity(gain) for gain, _ in pairs)),
+                   Vector(tuple(Quantity.from_unit(phase, _DEGREES) for _, phase in pairs))))
 
 
 def _trapz(args) -> Quantity:

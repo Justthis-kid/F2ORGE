@@ -72,3 +72,24 @@ def test_logarithmic_and_angular_units_are_their_own_kind():
 def test_pH_reports_a_concentration_in_molars():
     assert run("pH(0.01 mol/L)") == ["2"]
     assert run("fromPH(2)") == ["0.01 mol/L"]
+
+
+# ---- magnitude comparisons -------------------------------------------------------------------
+@pytest.mark.parametrize("src,expected", [
+    ("compare_mag(3, 2 m)", "1"),
+    ("compare_mag(2 m, 3)", "-1"),
+    ("compare_mag(1 m, 1 m)", "0"),
+    ("compare_mag(2 km, 1500 m)", "1"),      # units are converted before sizes are compared
+    ("less_mag(3, 2 m)", "false"),
+    ("less_equal_mag(2 m, 2)", "true"),
+    ("greater_mag(5 s, 3 kg)", "true"),
+    ("greater_equal_mag(1, 1)", "true"),
+    ("compare_mag(3 + 4i, 4 + 3i)", "0"),    # complex values compare by magnitude
+])
+def test_magnitude_comparisons_ignore_units(src, expected):
+    assert run(src) == [expected]
+
+
+def test_plain_comparisons_still_check_units():
+    err = error_of("3 < 2 m")
+    assert isinstance(err, UnitError) and "cannot compare" in err.message

@@ -22,11 +22,23 @@
   let chartResult = null;
 
   const nodeInputs = {
-    Input: 0, Constant: 0, Script: 0, Function: 1, Add: 2, Subtract: 2,
-    Multiply: 2, Divide: 2, Power: 2, Output: 1,
+    Input: 0, Constant: 0, Script: 0, Function: 1, Call: 2, Add: 2, Subtract: 2,
+    Multiply: 2, Divide: 2, Power: 2, Compare: 2, Output: 1, Output2: 1,
   };
-  const symbols = { Add: "+", Subtract: "-", Multiply: "*", Divide: "/", Power: "^" };
-  const supportedFunctions = ["sin", "cos", "tan", "asin", "acos", "atan", "exp", "ln", "log", "sqrt", "abs"];
+  const symbols = { Add: "+", Subtract: "-", Multiply: "*", Divide: "/", Power: "^", Compare: "<=" };
+  // A Compare node's value is an operator, or a magnitude comparison that ignores units.
+  const comparisons = { "<": "<", "<=": "<=", ">": ">", ">=": ">=", "==": "==", "!=": "!=",
+    lt: "<", le: "<=", gt: ">", ge: ">=", eq: "==", ne: "!=",
+    "mag<": "mag<", "mag<=": "mag<=", "mag>": "mag>", "mag>=": "mag>=" };
+  const magnitudeCalls = { "mag<": "less_mag", "mag<=": "less_equal_mag",
+    "mag>": "greater_mag", "mag>=": "greater_equal_mag" };
+  const supportedFunctions = [
+    "sin", "cos", "tan", "asin", "acos", "atan", "exp", "ln", "log", "sqrt", "abs",
+    "cross", "sum", "mean", "median", "std", "var", "percentile", "linreg", "det",
+    "transpose", "inverse", "real", "imag", "conj", "arg", "mag", "cbrt", "sign",
+    "fft", "ifft", "lowpass", "highpass", "db", "undb", "pH", "fromPH", "normalize",
+    "cumsum", "diff", "trapz", "ceil", "floor",
+  ];
   const reservedNames = new Set(["eq", "import", "export", "solve", "convert", "print", "for"]);
 
   function setStatus(message) {
@@ -323,6 +335,8 @@
     for (const [label, items, valueFor] of [
       ["VARIABLES", data.variables || [], (item) => item.value],
       ["EQUATIONS", data.equations || [], (item) => item.signature],
+      ["OBJECTS", data.objects || [], (item) =>
+        (item.properties || []).map((p) => `${p.name}${p.required ? "" : " = " + p.default}`).join(" · ")],
     ]) {
       if (!items.length) continue;
       const group = document.createElement("section");
@@ -336,7 +350,7 @@
         row.className = "workspace-item";
         const mark = document.createElement("span");
         mark.className = "value-mark";
-        mark.textContent = label === "VARIABLES" ? "x" : "ƒ";
+        mark.textContent = label === "VARIABLES" ? "x" : label === "OBJECTS" ? "◆" : "ƒ";
         const detail = document.createElement("div");
         const name = document.createElement("strong");
         name.textContent = item.name;
@@ -563,7 +577,10 @@
         Input: ["Variable name", "mass"],
         Constant: ["F²ORGE expression", "9.81 m/s^2"],
         Function: [`Function (${supportedFunctions.join(", ")})`, "sqrt"],
+        Call: ["Function or equation to call (area, Force, solveODE)", "area"],
+        Compare: ["Comparison (<, <=, >, >=, ==, !=)", "<="],
         Output: ["Output variable name", "result"],
+        Output2: ["Names to unpack, separated by commas", "time, velocity"],
       };
       if (defaults[kind]) {
         value = window.prompt(defaults[kind][0], defaults[kind][1]);
@@ -587,6 +604,27 @@
         (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(value) || reservedNames.has(value))) {
       setStatus(`'${value}' is not a valid ${kind.toLowerCase()} name`);
       return;
+    }
+    if (kind === "Output2") {
+      const names = value.split(",").map((part) => part.trim());
+      if (names.length < 2 ||
+          names.some((name) => !/^[A-Za-z_][A-Za-z0-9_]*$/.test(name) || reservedNames.has(name))) {
+        setStatus("A two-output node needs at least two valid names, separated by commas");
+        return;
+      }
+      value = names.join(", ");
+    }
+    if (kind === "Call" && !/^[A-Za-z_][A-Za-z0-9_]*$/.test(value)) {
+      setStatus(`'${value}' is not a function or equation name`);
+      return;
+    }
+    if (kind === "Compare") {
+      const chosen = comparisons[value.toLowerCase().replace(/\s/g, "")];
+      if (!chosen) {
+        setStatus("Use <, <=, >, >=, ==, != for like kinds, or mag<, mag<=, mag>, mag>= for sizes");
+        return;
+      }
+      value = chosen;
     }
     if (["Input", "Output"].includes(kind) && hasSharedName(kind, value)) {
       const produces = kind === "Output";
@@ -717,6 +755,8 @@
       }
       card.append(header, body);
       for (let index = 0; index < nodeInputs[node.kind]; index += 1) {
+        // A Call node grows an extra pin each time its last one is filled.
+        if (node.kind === "Call" && index > 0 && links[`${node.id}:${index - 1}`] === undefined) break;
         const input = document.createElement("button");
         input.type = "button";
         input.className = "node-in";
@@ -839,7 +879,7 @@
   }
 
   function compileGraph() {
-    const outputs = nodes.filter((node) => node.kind === "Output");
+    const outputs = nodes.filter((node) => node.kind === "Output" || node.kind === "Output2");
     const scripts = nodes.filter((node) => node.kind === "Script" && node.value.trim());
     if (!outputs.length && !scripts.length) throw new Error("Add an Output node or an F²ORGE Script node.");
     const memo = new Map();
@@ -862,10 +902,29 @@
         const source = links[`${id}:0`];
         if (source === undefined) throw new Error(`${node.value} node ${id} needs an input connected.`);
         result = `${node.value}(${expression(source)})`;
+      } else if (node.kind === "Call") {
+        // One input pin per argument: area(r) uses one, cross(a, b) two.
+        const args = [];
+        for (let index = 0; links[`${id}:${index}`] !== undefined; index += 1) {
+          args.push(expression(links[`${id}:${index}`]));
+        }
+        if (!args.length) throw new Error(`Call node ${id} needs at least one argument connected.`);
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(node.value)) {
+          throw new Error(`Invalid function or equation name: ${node.value || "(empty)"}`);
+        }
+        result = `${node.value}(${args.join(", ")})`;
       } else if (symbols[node.kind]) {
         const left = links[`${id}:0`], right = links[`${id}:1`];
         if (left === undefined || right === undefined) throw new Error(`${node.kind} node ${id} needs both inputs connected.`);
-        result = `(${expression(left)} ${symbols[node.kind]} ${expression(right)})`;
+        if (node.kind === "Compare") {
+          const chosen = comparisons[node.value] || symbols.Compare;
+          const call = magnitudeCalls[chosen];
+          result = call
+            ? `${call}(${expression(left)}, ${expression(right)})`
+            : `(${expression(left)} ${chosen} ${expression(right)})`;
+        } else {
+          result = `(${expression(left)} ${symbols[node.kind]} ${expression(right)})`;
+        }
       } else {
         throw new Error("Output nodes cannot be used as input values.");
       }
@@ -885,6 +944,10 @@
       if (node.kind === "Function") {
         const source = links[`${id}:0`];
         if (source !== undefined) collectInputs(source, found, visited);
+      } else if (node.kind === "Call") {
+        for (let index = 0; links[`${id}:${index}`] !== undefined; index += 1) {
+          collectInputs(links[`${id}:${index}`], found, visited);
+        }
       } else if (symbols[node.kind]) {
         for (let index = 0; index < 2; index += 1) {
           const source = links[`${id}:${index}`];
@@ -897,12 +960,15 @@
     const names = new Set();
     const outputsByName = new Map();
     for (const node of outputs) {
-      if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(node.value) || reservedNames.has(node.value)) {
-        throw new Error(`Invalid output variable name: ${node.value}`);
+      const parts = node.kind === "Output2" ? node.value.split(",").map((part) => part.trim()) : [node.value];
+      for (const part of parts) {
+        if (!/^[A-Za-z_][A-Za-z0-9_]*$/.test(part) || reservedNames.has(part)) {
+          throw new Error(`Invalid output variable name: ${part}`);
+        }
+        if (names.has(part)) throw new Error(`Output variable '${part}' is used more than once.`);
+        names.add(part);
+        outputsByName.set(part, node);
       }
-      if (names.has(node.value)) throw new Error(`Output variable '${node.value}' is used more than once.`);
-      names.add(node.value);
-      outputsByName.set(node.value, node);
     }
     const ordered = [];
     const visited = new Set();
@@ -928,6 +994,12 @@
     const lines = scripts.map((node) => node.value.trim());
     for (const node of ordered) {
       const source = links[`${node.id}:0`];
+      if (node.kind === "Output2") {
+        // Unpack a function that returns several parts: [t, v] = solveODE(...).
+        const parts = node.value.split(",").map((part) => part.trim());
+        lines.push(`[${parts.join(", ")}] = ${expression(source)}`, ...parts);
+        continue;
+      }
       lines.push(`${node.value} = ${expression(source)}`, node.value);
     }
     return lines.filter(Boolean).join("\n");
@@ -976,10 +1048,11 @@
       const source = restored.find((node) => node.id === connection.source);
       const key = `${connection.target}:${connection.input}`;
       if (!ids.has(connection.source) || !ids.has(connection.target) ||
-          !source || source.kind === "Output" || source.kind === "Script" ||
+          !source || source.kind === "Output" || source.kind === "Output2" ||
+          source.kind === "Script" ||
           !target ||
           !Number.isInteger(connection.input) || connection.input < 0 ||
-          connection.input >= nodeInputs[target.kind] ||
+          (target.kind !== "Call" && connection.input >= nodeInputs[target.kind]) ||
           Object.prototype.hasOwnProperty.call(restoredLinks, key)) {
         throw new Error("Graph contains an invalid connection.");
       }

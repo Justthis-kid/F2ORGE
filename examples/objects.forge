@@ -1,0 +1,34 @@
+# Domain objects: three built in, and one of your own.
+#
+# Run with:  forge run examples/objects.forge
+
+# ---- rocket -----------------------------------------------------------------------------------
+r = Rocket(dryMass = 1200 kg, propellantMass = 2800 kg, isp = 311 s)
+r.wetMass                 # 4000 kg
+r.deltaV                  # 3671.958309 m/s, Tsiolkovsky's equation
+r.burnTime(50 kN)         # how long the propellant lasts at that thrust
+
+# ---- motor ------------------------------------------------------------------------------------
+m = Motor(torque = 2.5 N*m, speed = 3000 rpm)
+m.power                   # 785.3981634 W
+
+# ---- battery ----------------------------------------------------------------------------------
+b = Battery(capacity = 5 Ah, voltage = 11.1 V)
+b.energy                  # 199800 J
+b.runtime(10 A)
+
+# ---- your own object --------------------------------------------------------------------------
+object Car {
+    description = "A simple electric car"
+    mass : kg = 1500 kg "kerb mass"
+    v : m/s = 20 m/s "cruising speed"
+    energy() : J = 0.5 * mass * v^2 "kinetic energy"
+    distance(seconds : s) : m = v * seconds "how far it travels"
+}
+
+car = Car()
+car.energy                # 300000 J
+car.distance(3 s)         # 60 m
+
+lighter = Car(mass = 900 kg)
+lighter.energy            # 180000 J, same speed with less mass

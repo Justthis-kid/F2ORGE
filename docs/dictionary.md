@@ -17,6 +17,9 @@ support for unlisted or planned syntax. For examples in sequence, read the
 | **Equation input** | A variable used by an equation but not defined by one of its relations. |
 | **Equation output** | A name defined on the left side of a simple equation relation. |
 | **Implicit relation** | A relation with a non-name left side, useful in `solve` blocks but not callable as an ordinary output formula. |
+| **Domain object** | A bundle of unit-checked properties and formulas, either built in (`Rocket`) or declared with `object`. |
+| **Property** | A value an object holds, declared as `name : unit = default`; a property with no default must be supplied. |
+| **Formula** | A computed value an object offers, written `name = ...` or `name(params) : unit = ...`. |
 | **Quantity** | A numeric magnitude paired with a dimension and display unit. |
 | **SI magnitude** | The value after converting a quantity to coherent SI units; conversions and calculations operate on this representation. |
 | **Unit declaration** | `name : unit` inside an equation; documents a variable and enables equation/call dimensional checks. |
@@ -47,6 +50,8 @@ support for unlisted or planned syntax. For examples in sequence, read the
 | `def`, `fn` | Define a function: `def area(r) { return pi * r^2 }`. |
 | `return` | Give a function's result and leave it. |
 | `break`, `continue` | Leave a loop, or start its next pass. |
+| `object` | Declare a domain object: `object Car { mass : kg = 1200 kg  energy() : J = ... }`. |
+| `Rocket`, `Motor`, `Battery` | Built-in domain objects; build one with named values, e.g. `Rocket(dryMass = 1200 kg, ...)`. |
 | `import` | Load an equation by library name or `.eq` path. |
 | `export` | Write a named equation to a `.eq` file. |
 | `convert` | Convert a quantity: `convert 10 ft -> m`. |
@@ -90,6 +95,7 @@ unit compounds tightly (`kg*m/s^2`) and expression operators with spaces (`10 m 
 | `exp(x)`, `ln(x)`, `log(x)`, `log2(x)`, `log(x, base)` | Exponential and logarithm functions in several bases. |
 | `sqrt(x)`, `cbrt(x)` | Roots; the square root of a negative quantity is imaginary (`sqrt(-1)` is `i`). |
 | `abs(x)`, `sign(x)`, `floor(x)`, `ceil(x)`, `round(x, n)` | Magnitude and rounding. |
+| `compare_mag(a, b)`, `less_mag`, `less_equal_mag`, `greater_mag`, `greater_equal_mag` | Compare sizes and ignore the kind of quantity; `<` and `>` keep unit checking. |
 | `min(a, b, ...)`, `max(a, b, ...)`, `clamp(x, lo, hi)` | Select among, or bound, compatible scalar quantities. |
 | `cross(a, b)` | Cross product of two length-3 vectors. |
 | `transpose(A)`, `inverse(A)`, `det(A)` | Transpose, invert (square matrices with consistent units), and determinant. |

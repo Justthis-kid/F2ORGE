@@ -233,6 +233,10 @@ def launch_desktop_ide() -> None:
         for name, equation in sorted(session.interpreter.equations.items()):
             signature = f"{', '.join(equation.inputs)} -> {', '.join(equation.outputs)}"
             workspace.insert("", "end", values=("Equation", name, signature))
+        for name, kind in sorted(session.interpreter.object_types.items()):
+            props = ", ".join(kind.properties)
+            workspace.insert("", "end", values=("Object", name,
+                                                f"{props} ({len(kind.formulas)} formula)"))
 
     def append_console(text: str) -> None:
         console.configure(state="normal")
@@ -402,6 +406,9 @@ def launch_desktop_ide() -> None:
             "Constant": "#685541",
             "Script": "#59534f",
             "Function": "#59534f",
+            "Call": "#5d5a46",
+            "Compare": "#675344",
+            "Output2": "#704b43",
             "Add": "#675344",
             "Subtract": "#675344",
             "Multiply": "#675344",
@@ -414,6 +421,9 @@ def launch_desktop_ide() -> None:
             "Constant": "#a87c50",
             "Script": "#887b70",
             "Function": "#887b70",
+            "Call": "#9a8b62",
+            "Compare": "#9a765c",
+            "Output2": "#a76351",
             "Add": "#9a765c",
             "Subtract": "#9a765c",
             "Multiply": "#9a765c",
@@ -438,7 +448,7 @@ def launch_desktop_ide() -> None:
                                fill="#f3f4f6" if dark else "white",
                                font=("Segoe UI", 10, "bold"),
                                tags=("node", f"node:{node.id}"))
-            if node.kind in ("Input", "Output") and any(
+            if node.kind in ("Input", "Output", "Output2") and any(
                 other.id != node.id
                 and other.kind != node.kind
                 and other.value == node.value
@@ -475,7 +485,7 @@ def launch_desktop_ide() -> None:
                 canvas.create_text(x + 13, py, anchor="w", text=f"in {index + 1}",
                                    fill=text_color, font=("Segoe UI", 8),
                                    tags=("node", f"node:{node.id}"))
-            if node.kind not in ("Output", "Script"):
+            if node.kind not in ("Output", "Output2", "Script"):
                 canvas.create_oval(x + width - 6, y + height / 2 - 6,
                                    x + width + 6, y + height / 2 + 6,
                                    fill="#7f9b8a" if dark else "#849587",
@@ -526,6 +536,8 @@ def launch_desktop_ide() -> None:
         return result[0]
 
     def confirm_shared_name(kind: str, value: str, exclude_id: Optional[int] = None) -> bool:
+        if kind == "Output2":
+            return True  # each unpacked name is checked by the graph when it compiles
         opposite = "Output" if kind == "Input" else "Input"
         if not any(node.id != exclude_id and node.kind == opposite and node.value == value
                    for node in visual_graph.nodes.values()):
@@ -547,9 +559,27 @@ def launch_desktop_ide() -> None:
             value = simpledialog.askstring(f"{kind} node", "Variable name:", parent=root) or ""
             if not value:
                 return
+        elif kind == "Output2":
+            value = simpledialog.askstring(
+                "Two-output node", "Names to unpack, separated by commas (time, velocity):",
+                parent=root) or ""
+            if not value:
+                return
+        elif kind == "Call":
+            value = simpledialog.askstring(
+                "Call node", "Function or equation to call (area, Force, solveODE):",
+                parent=root) or ""
+            if not value:
+                return
+        elif kind == "Compare":
+            value = simpledialog.askstring(
+                "Compare node", "Comparison (<, <=, >, >=, ==, !=):", initialvalue="<=",
+                parent=root) or ""
+            if not value:
+                return
         elif kind == "Function":
             value = simpledialog.askstring(
-                "Function node", "Function (sin, cos, tan, exp, ln, log, sqrt, abs):", parent=root
+                "Function node", "Function (sin, sqrt, fft, ...):", parent=root
             ) or ""
             if not value:
                 return
@@ -658,7 +688,7 @@ def launch_desktop_ide() -> None:
                     node = visual_graph.nodes[int(tag.split(":")[1])]
                     if node.kind == "Script":
                         value = edit_script_text("Edit F²ORGE script", node.value)
-                    elif node.kind in ("Input", "Constant", "Output"):
+                    elif node.kind in ("Input", "Constant", "Output", "Output2", "Call", "Compare"):
                         value = simpledialog.askstring(
                             f"Edit {node.kind} node", "Value:", initialvalue=node.value, parent=root
                         )
@@ -762,7 +792,33 @@ def launch_desktop_ide() -> None:
         if command == ":help":
             append_console("Enter F²ORGE expressions or assignments. plot(y) and plot(x, y) draw "
                            "workspace vectors, and a plot statement in a script opens its graph "
-                           "after the run; :clear resets variables; Up/Down recalls commands.")
+                           "after the run. :clear resets variables; :trace runs the editor's "
+                           "program statement by statement; :profile reports where its time goes; "
+                           ":vars lists values; Up/Down recalls commands.")
+            return
+        if command in (":trace", ":profile"):
+            text = editor.get("1.0", "end-1c")
+            try:
+                if command == ":trace":
+                    from .debug import trace_of
+
+                    frames = trace_of(text, current_path.name if current_path else "<editor>",
+                                      base_dir=current_path.parent if current_path else None)
+                    for frame in frames:
+                        append_console(f"{frame.line:>4}  {frame.kind:<11} {frame.source.strip()}")
+                    append_console(f"{len(frames)} statements ran")
+                else:
+                    from .debug import profile
+
+                    result = profile(text, current_path.name if current_path else "<editor>",
+                                     base_dir=current_path.parent if current_path else None)
+                    append_console(result.report())
+                    if result.error is not None:
+                        append_console(result.error.format())
+                set_status("Trace complete" if command == ":trace" else "Profile complete")
+            except ForgeError as err:
+                append_console(err.format())
+                set_status("Trace failed" if command == ":trace" else "Profile failed")
             return
         if re.match(r"^\s*plot(?:\s|\()", command):
             try:
@@ -872,7 +928,8 @@ def launch_desktop_ide() -> None:
 
     visual_toolbar = ttk.Frame(visual_tab, padding=6)
     visual_toolbar.pack(fill="x")
-    for kind in ("Input", "Constant", "Function", "Script", "Add", "Subtract", "Multiply", "Divide", "Power", "Output"):
+    for kind in ("Input", "Constant", "Function", "Call", "Script", "Add", "Subtract", "Multiply",
+                 "Divide", "Power", "Compare", "Output", "Output2"):
         ttk.Button(visual_toolbar, text=f"+ {kind}", command=lambda k=kind: add_visual_node(k)).pack(
             side="left", padx=(0, 4)
         )

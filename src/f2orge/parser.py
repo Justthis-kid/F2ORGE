@@ -141,6 +141,8 @@ class Parser:
                 return self.eq_def()
             if kw == "worksheet":
                 return self.worksheet_def()
+            if kw == "object":
+                return self.object_def()
             if kw == "import":
                 return self.import_stmt()
             if kw == "export":
@@ -162,6 +164,10 @@ class Parser:
                           "Write 'elseif condition {' or 'else {' directly after the previous block.")
             if self.is_op("=", 1):
                 return self.assign()
+        if t.kind == "op" and t.text == "[":
+            names = self.names_until_bracket()
+            if names is not None:
+                return names
         expr = self.expression()
         return S.ExprStmt(expr, expr.span)
 
@@ -318,6 +324,39 @@ class Parser:
         body = self.block(kw, "function")
         return S.Def(name.text, tuple(params), default, body, self.span_from(kw.start),
                      Span(self.source, name.start, name.end))
+
+    def names_until_bracket(self):
+        """`[a, b] = call(...)`: bind the parts of one returned value to several names.
+
+        Returns None (leaving the parser where it started) when the brackets hold values rather
+        than a list of names, so `<1, 2>` and `v[0]` keep their usual meaning.
+        """
+        start = self.i
+        try:
+            self.expect_op("[")
+            self.depth += 1
+            names: List[Token] = []
+            while True:
+                names.append(self.expect_ident("a variable name"))
+                if self.is_op(","):
+                    self.next()
+                    continue
+                break
+            self.expect_op("]", "Expected ']' to close the list of names",
+                           "Write: [a, b] = call(...)")
+            self.depth -= 1
+            self.expect_op("=", "Expected '=' after the list of names")
+        except ForgeSyntaxError:
+            self.i = start
+            self.depth = 0
+            return None
+        self.skip_nl()
+        self.header = True
+        try:
+            expr = self.expression()
+        finally:
+            self.header = False
+        return S.MultiAssign(tuple(name.text for name in names), expr, self.span_from(names[0].start))
 
     def assign(self):
         name = self.next()
@@ -507,6 +546,141 @@ class Parser:
         self.skip_nl()
         rhs = self.expression()
         return S.Relation(lhs, rhs, self.span_from(start))
+
+    def object_def(self):
+        """`object Car { mass : kg = 1200 kg  energy = 0.5 * mass * v^2 }`.
+
+        Properties are declared with a unit and an optional default; formulas are either a value
+        (`energy = ...`) or a call with parameters (`range(distance) = ...`).  An optional quoted
+        string after a property documents it; `description = "..."` documents the type.
+        """
+        kw = self.next()
+        name = self.expect_ident("a name for the object")
+        self.skip_nl()
+        self.expect_op("{", "Expected '{' to start the object body")
+        properties: List[S.PropertySpec] = []
+        formulas: List[S.FormulaSpec] = []
+        doc = ""
+        while True:
+            self.skip_separators()
+            if self.is_op("}"):
+                break
+            if self.peek().kind == "eof":
+                self.fail(f"The object '{name.text}' is missing its closing '}}'", kw)
+            item = self.object_item(name.text)
+            if isinstance(item, S.PropertySpec):
+                if any(existing.name == item.name for existing in properties):
+                    self.fail(f"'{item.name}' is declared twice in {name.text}", item.span)
+                if any(existing.name == item.name for existing in formulas):
+                    self.fail(f"'{item.name}' is both a property and a formula", item.span)
+                properties.append(item)
+            elif isinstance(item, S.FormulaSpec):
+                if any(existing.name == item.name for existing in formulas):
+                    self.fail(f"'{item.name}' is defined twice in {name.text}", item.span)
+                if any(existing.name == item.name for existing in properties):
+                    self.fail(f"'{item.name}' is both a property and a formula", item.span)
+                formulas.append(item)
+            else:
+                doc = item
+            token = self.peek()
+            if not (token.kind == "nl" or (token.kind == "op" and token.text in ";}")):
+                self.fail(f"Unexpected {self.describe(token)}; this object item should end here", token)
+        self.expect_op("}")
+        return S.ObjectDef(name.text, tuple(properties), tuple(formulas), doc, self.span_from(kw.start),
+                           Span(self.source, name.start, name.end))
+
+    def formula_after_unit(self, name: Token, unit, span) -> S.FormulaSpec:
+        """A formula written `name(...) : result-unit = body`."""
+        params: Tuple[str, ...] = ()
+        if self.is_op("("):
+            self.next()
+            self.depth += 1
+            names: List[str] = []
+            while not self.is_op(")"):
+                param = self.expect_ident("a parameter name")
+                if param.text in names:
+                    self.fail(f"parameter '{param.text}' is listed twice", param)
+                names.append(param.text)
+                if self.is_op(":"):
+                    self.next()
+                    self.parse_unit_atoms(tight=False)
+                if not self.is_op(","):
+                    break
+                self.next()
+            self.expect_op(")", "Expected ',' or ')' in this parameter list")
+            self.depth -= 1
+            params = tuple(names)
+        self.expect_op("=", f"Expected '=' and the formula for '{name.text}'")
+        self.header = True
+        try:
+            body = self.expression()
+        finally:
+            self.header = False
+        doc = self.next().value if self.peek().kind == "str" else ""
+        return S.FormulaSpec(name.text, params, body, doc, unit, span)
+
+    def object_item(self, owner: str):
+        """One line of an object body: a documentation line, a property, or a formula."""
+        token = self.peek()
+        if token.kind == "ident" and token.text == "description" and self.is_op("=", 1):
+            self.next()
+            self.next()
+            self.skip_nl()
+            value = self.next()
+            if value.kind != "str":
+                self.fail("description needs quoted text", value)
+            return value.value
+        if token.kind != "ident" or token.text in KEYWORDS:
+            self.fail(f"Expected a property or formula name in {owner} but found {self.describe(token)}",
+                      token)
+        if self.is_op(":", 1):
+            name = self.next()
+            self.next()  # ':'
+            unit = self.make_unit(self.parse_unit_atoms(tight=False))
+            if self.is_op("("):
+                # `energy() : J = ...` is a formula that states its result unit.
+                return self.formula_after_unit(name, unit, self.span_from(name.start))
+            default = None
+            if self.is_op("="):
+                self.next()
+                self.skip_nl()
+                default = self.expression()
+            doc = self.next().value if self.peek().kind == "str" else ""
+            return S.PropertySpec(name.text, unit, default, doc, self.span_from(name.start))
+        start = token.start
+        name = self.next()
+        params: Tuple[str, ...] = ()
+        if self.is_op("("):
+            self.next()
+            self.depth += 1
+            names: List[str] = []
+            while not self.is_op(")"):
+                param = self.expect_ident("a parameter name")
+                if param.text in names:
+                    self.fail(f"parameter '{param.text}' is listed twice", param)
+                names.append(param.text)
+                if self.is_op(":"):
+                    self.next()
+                    self.parse_unit_atoms(tight=False)
+                if not self.is_op(","):
+                    break
+                self.next()
+            self.expect_op(")", "Expected ',' or ')' in this parameter list")
+            self.depth -= 1
+            params = tuple(names)
+        result_unit = None
+        if self.is_op(":"):  # the formula's result unit: `distance(t) : m = v * t`
+            self.next()
+            result_unit = self.make_unit(self.parse_unit_atoms(tight=False))
+        self.expect_op("=", f"Expected ':' (a unit) or '=' (a formula) after '{name.text}'",
+                       f"Write: {name.text} : kg   or   {name.text} = ...")
+        self.header = True
+        try:
+            body = self.expression()
+        finally:
+            self.header = False
+        doc = self.next().value if self.peek().kind == "str" else ""
+        return S.FormulaSpec(name.text, params, body, doc, result_unit, self.span_from(start))
 
     def worksheet_def(self):
         kw = self.next()
@@ -754,13 +928,22 @@ class Parser:
         return left
 
     def vector_operand(self):
-        """A vector literal that may be followed by its own * and / factors: `<1, 2> * A`."""
+        """A vector literal followed by its own factors and powers: `<1, 2>^2`, `<1, 2> * A`."""
         node = self.vector_literal("<", ">")
-        while self.is_op("*") or self.is_op("/"):
+        if self.is_op("^") and self.peek().start == node.span.end:  # <1, 2>^2 raises each element
+            self.next()
+            self.skip_nl()
+            exponent = self.unary()
+            node = S.Binary("^", node, exponent, self._join(node, exponent))
+        while self.is_op("*") or self.is_op("/") \
+                or (self.is_op(".") and (self.is_op("*", 1) or self.is_op("/", 1))):
             op = self.next()
+            text = op.text
+            if text == ".":
+                text += self.next().text  # `.*` and `./`
             self.skip_nl()
             right = self.vector_operand() if self.is_op("<") else self.unary()
-            node = S.Binary(op.text, node, right, self._join(node, right))
+            node = S.Binary(text, node, right, self._join(node, right))
         return node
 
     def vector_starts_here(self) -> bool:
@@ -795,16 +978,18 @@ class Parser:
 
     def term(self):
         left = self.unary()
-        while self.is_op("*") or self.is_op("/"):
-            op = self.next()
+        while True:
+            if self.is_op("*") or self.is_op("/"):
+                op = self.next()
+                text = op.text
+            elif self.is_op(".") and (self.is_op("*", 1) or self.is_op("/", 1)):
+                self.next()  # the '.' of `.*` or `./`: element by element (MATLAB style)
+                text = "." + self.next().text
+            else:
+                return left
             self.skip_nl()
             right = self.vector_literal("<", ">") if self.is_op("<") else self.unary()
-            text = op.text
-            if self.is_op("."):  # `.*` and `./` element-by-element (MATLAB style; `*` already is)
-                self.next()
-                text += "."
             left = S.Binary(text, left, right, self._join(left, right))
-        return left
 
     def unary(self):
         if self.is_op("-") or self.is_op("+"):
@@ -842,10 +1027,14 @@ class Parser:
         node = self.primary()
         while True:
             t = self.peek()
-            if t.kind == "op" and t.text == "." and self.peek(1).kind == "ident":
+            if t.kind == "op" and t.text == "." and self.peek(1).kind == "ident" \
+                    and self.peek(1).start == t.end:
+                # `M.T` is a member; the `.` of `a .* b` is followed by a space and then `*`.
                 self.next()
                 attr = self.next()
                 node = S.Member(node, attr.text, Span(self.source, node.span.start, attr.end))
+                if self.is_op("(") and t.start == node.obj.span.end and self.peek().start == attr.end:
+                    node = self.member_call(node)  # `rocket.burnTime(50 kN)`
             elif t.kind == "super":
                 self.next()
                 node = S.Binary("^", node, S.Number(float(t.value), Span(self.source, t.start, t.end)),
@@ -861,6 +1050,39 @@ class Parser:
                 node = S.Index(node, indices, Span(self.source, node.span.start, end.end), count)
             else:
                 return node
+
+    def member_call(self, member: S.Member):
+        """The arguments of `rocket.burnTime(...)`: the member is the function being called."""
+        self.next()  # '('
+        self.depth += 1
+        args: List[object] = []
+        kwargs: List[Tuple[str, object, Optional[Span]]] = []
+        try:
+            while True:
+                while self.peek().kind == "nl":
+                    self.next()
+                if self.is_op(")"):
+                    break
+                t = self.peek()
+                follow = self.peek_raw(1)
+                if t.kind == "ident" and follow.kind == "op" and follow.text == "=" and t.text not in KEYWORDS:
+                    self.next()
+                    self.next()
+                    kwargs.append((t.text, self.expression(), Span(self.source, t.start, t.end)))
+                else:
+                    args.append(self.expression())
+                if self.is_op(","):
+                    self.next()
+                    continue
+                while self.peek().kind == "nl":
+                    self.next()
+                if not self.is_op(")"):
+                    break
+            end = self.expect_op(")", "Expected ',' or ')' in this call")
+        finally:
+            self.depth -= 1
+        return S.MethodCall(member.obj, member.attr, tuple(args), tuple(kwargs),
+                            Span(self.source, member.span.start, end.end))
 
     def index_items(self):
         """Index lists: `:` selects everything along that axis, `j:k` begins a counted selection."""

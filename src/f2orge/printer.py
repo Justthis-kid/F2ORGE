@@ -6,7 +6,7 @@ from typing import List
 from . import syntax as S
 
 # binding strength: higher binds tighter
-_PREC = {"+": 1, "-": 1, "*": 2, "/": 2}
+_PREC = {"+": 1, "-": 1, "*": 2, "/": 2, ".*": 2, "./": 2}
 _UNARY, _POW, _QUANTITY, _ATOM = 3, 4, 5, 6
 
 
@@ -45,6 +45,10 @@ def format_expr(node, parent: int = 0) -> str:
         text = node.name
     elif isinstance(node, S.Member):
         text = f"{format_expr(node.obj, _ATOM)}.{node.attr}"
+    elif isinstance(node, S.MethodCall):
+        parts: List[str] = [format_expr(a) for a in node.args]
+        parts += [f"{k} = {format_expr(v)}" for k, v, _ in node.kwargs]
+        text = f"{format_expr(node.obj, _ATOM)}.{node.attr}({', '.join(parts)})"
     elif isinstance(node, S.VectorLiteral):
         text = "<" + ", ".join(format_expr(item) for item in node.items) + ">"
     elif isinstance(node, S.MatrixLiteral):

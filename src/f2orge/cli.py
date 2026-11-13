@@ -450,6 +450,44 @@ def cmd_calc(args) -> int:
     return 0
 
 
+def cmd_trace(args) -> int:
+    """Run a program statement by statement, showing each line and what it changed."""
+    from .debug import trace_of
+
+    path = Path(args.file)
+    if not path.is_file():
+        print(f"error: cannot find {path}", file=sys.stderr)
+        return 2
+    try:
+        frames = trace_of(path.read_text(encoding="utf-8-sig"), str(path), base_dir=path.parent)
+    except ForgeError as err:
+        _report(err)
+        return 1
+    for frame in frames:
+        if args.kind and frame.kind != args.kind:
+            continue
+        print(f"{frame.line:>4}  {frame.kind:<11} {frame.source.strip()}")
+    print(f"{len(frames)} statements ran")
+    return 0
+
+
+def cmd_profile(args) -> int:
+    """Run a program and report the time each source line took."""
+    from .debug import profile
+
+    path = Path(args.file)
+    if not path.is_file():
+        print(f"error: cannot find {path}", file=sys.stderr)
+        return 2
+    result = profile(path.read_text(encoding="utf-8-sig"), str(path), base_dir=path.parent,
+                     runs=args.runs)
+    print(result.report())
+    if result.error is not None:
+        _report(result.error)
+        return 1
+    return 0
+
+
 def cmd_ide(_args) -> int:
     from .web_ide import serve_desktop_ide
 
@@ -571,6 +609,16 @@ def build_parser() -> argparse.ArgumentParser:
     ide = sub.add_parser("ide", help="launch the offline desktop IDE",
                          description="Launch the offline IDE in an embedded webview.")
     ide.set_defaults(func=cmd_ide)
+
+    tr = sub.add_parser("trace", help="show every statement a program runs")
+    tr.add_argument("file")
+    tr.add_argument("--kind", help="only show one kind of statement, such as 'assignment'")
+    tr.set_defaults(func=cmd_trace)
+
+    pr = sub.add_parser("profile", help="report the time each source line takes")
+    pr.add_argument("file")
+    pr.add_argument("--runs", type=int, default=1, help="repeat the program this many times")
+    pr.set_defaults(func=cmd_profile)
 
     transpile = sub.add_parser(
                            "transpile", help="convert a F²ORGE program to Python, C++, MicroPython, or TI-84 BASIC"

@@ -66,6 +66,17 @@ class Member:
 
 
 @dataclass(frozen=True)
+class MethodCall:
+    """`rocket.burnTime(50 kN)`: a formula that belongs to a domain object."""
+
+    obj: object
+    attr: str
+    args: Tuple[object, ...] = ()
+    kwargs: Tuple[Tuple[str, object, Optional[Span]], ...] = ()
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
 class Index:
     obj: object
     indices: Tuple[object, ...]
@@ -112,6 +123,11 @@ def children(node) -> Iterator[object]:
             yield expr
     elif isinstance(node, Member):
         yield node.obj
+    elif isinstance(node, MethodCall):
+        yield node.obj
+        yield from node.args
+        for _, expr, _ in node.kwargs:
+            yield expr
     elif isinstance(node, Index):
         yield node.obj
         yield from node.indices
@@ -165,6 +181,15 @@ class Relation:
 @dataclass(frozen=True)
 class Assign:
     name: str
+    expr: object
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class MultiAssign:
+    """`[a, b] = call(...)`: one returned value bound to several names, in order."""
+
+    names: Tuple[str, ...]
     expr: object
     span: Optional[Span] = None
 
@@ -239,6 +264,45 @@ class Export:
 class EqDef:
     name: str
     items: Tuple[object, ...]
+    span: Optional[Span] = None
+    name_span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class PropertySpec:
+    """`mass : kg` or `mass : kg = 1200 kg "vehicle mass"` inside an object declaration."""
+
+    name: str
+    unit: Unit
+    default: object = None
+    doc: str = ""
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class FormulaSpec:
+    """`energy = mass * c^2` or `range(distance) = energy / (distance * resistance)`.
+
+    A formula with parameters is called (`rocket.range(5 km)`); one without is a value
+    (`car.energy`).  The body is an expression, evaluated with the object's properties in scope.
+    """
+
+    name: str
+    params: Tuple[str, ...]
+    body: object
+    doc: str = ""
+    unit: Optional[Unit] = None  # the declared result unit, from `distance(seconds) : m = ...`
+    span: Optional[Span] = None
+
+
+@dataclass(frozen=True)
+class ObjectDef:
+    """`object Car { mass : kg = 1200 kg; energy = 0.5 * mass * v^2 }`."""
+
+    name: str
+    properties: Tuple[PropertySpec, ...]
+    formulas: Tuple[FormulaSpec, ...]
+    doc: str = ""
     span: Optional[Span] = None
     name_span: Optional[Span] = None
 
