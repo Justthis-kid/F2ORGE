@@ -152,7 +152,8 @@ ARITY = {
     "real": (1, 1), "imag": (1, 1), "conj": (1, 1), "arg": (1, 1), "mag": (1, 1),
     "format": (1, 99), "text": (1, 1), "char": (1, 1), "ascii": (1, 1), "upper": (1, 1), "lower": (1, 1),
     "integrate": (2, 4), "derivative": (2, 2), "roots": (1, 1), "fzero": (2, 3), "minimize": (2, 3),
-    "surface": (3, 3), "readtable": (1, 1), "csvwrite": (2, 2), "limit": (2, 2), "dsolve": (4, 4),
+    "surface": (3, 3), "readtable": (1, 1), "csvwrite": (2, 2), "limit": (2, 2), "solveODE": (4, 4),
+    "solvePDE": (1, 3),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -374,8 +375,8 @@ class Evaluator:
         second = free[1] if len(free) > 1 else ("y" if names[0] == "x" else "x")
         return GridFunction(node, self, scope, (names[0], second))
 
-    def _dsolve(self, node: S.Call, scope: Scope):
-        """dsolve(f, y0, t0, t1): integrate dy/dt = f(t, y), returning <times, values>."""
+    def _solveODE(self, node: S.Call, scope: Scope):
+        """solveODE(f, y0, t0, t1): integrate dy/dt = f(t, y), returning <times, values>."""
         from .ode import integrate
 
         y0 = self.eval(node.args[1], scope)
@@ -383,32 +384,58 @@ class Evaluator:
         t1 = self.eval(node.args[3], scope)
         for value, what in ((y0, "the starting value"), (t0, "the start time"), (t1, "the end time")):
             if not isinstance(value, Quantity):
-                raise ForgeEvalError(f"dsolve() needs a scalar quantity for {what}", node.span)
+                raise ForgeEvalError(f"solveODE() needs a scalar quantity for {what}", node.span)
         if t0.dim != t1.dim:
-            raise UnitError("dsolve() start and end times must have the same unit", node.span)
+            raise UnitError("solveODE() start and end times must have the same unit", node.span)
         if t1.value == t0.value:
-            raise ForgeEvalError("dsolve() needs an end time different from the start time", node.span)
+            raise ForgeEvalError("solveODE() needs an end time different from the start time", node.span)
         derivative = self._derivative_function(node.args[0], scope, node.span)
         first = derivative(Quantity(t0.value, t0.dim), y0)
         if not isinstance(first, Quantity):
-            raise ForgeEvalError("dsolve() needs a function that returns a number", node.span)
+            raise ForgeEvalError("solveODE() needs a function that returns a number", node.span)
         # dy/dt must measure the value per unit of time, or the result cannot have y0's unit.
         value_dim = first.dim * t0.dim
         if value_dim != y0.dim:
             raise UnitError(
-                f"dsolve() needs a derivative in {describe_full(y0.dim)} per {describe_full(t0.dim)}, "
+                f"solveODE() needs a derivative in {describe_full(y0.dim)} per {describe_full(t0.dim)}, "
                 f"but it gives {describe_full(first.dim)}", node.span,
                 hint="The derivative is dy/dt: its unit is the value's unit divided by time.")
 
         def slope(t_: float, y_: float) -> float:
             out = derivative(Quantity(t_, t0.dim), Quantity(y_, y0.dim))
             if not isinstance(out, Quantity):
-                raise ForgeEvalError("dsolve() needs a function that returns a number", node.span)
+                raise ForgeEvalError("solveODE() needs a function that returns a number", node.span)
             return out.value
 
         times, values = integrate(slope, y0.value, t0.value, t1.value)
         return Vector((Vector(tuple(Quantity(t, t0.dim, t0.unit) for t in times)),
                        Vector(tuple(Quantity(v, value_dim, y0.unit) for v in values))))
+
+    def _solve_pde(self, node: S.Call, scope: Scope):
+        """solvePDE(grid) or solvePDE(grid, cells): relax a field to steady state.
+
+        `grid` is a square matrix whose edge values are the boundary conditions and whose interior
+        values are the starting guess (0 for a cold field).  The result is a matrix of the same
+        shape that plots as a heatmap.
+        """
+        from .ode import solve_poisson
+
+        grid = self.eval(node.args[0], scope)
+        if not isinstance(grid, Matrix):
+            raise ForgeEvalError("solvePDE() needs a square matrix of boundary values", node.span,
+                                 hint="Build one with surface() or reshape(), or fill edges by hand.")
+        rows, columns = grid.shape
+        if rows != columns:
+            raise ForgeEvalError(f"solvePDE() needs a square grid, found {rows}x{columns}", node.span)
+        cells = _plain_integer(self.eval(node.args[1], scope), "solvePDE() grid size") \
+            if len(node.args) > 1 else rows
+        if cells < 3:
+            raise ForgeEvalError("solvePDE() needs a grid at least 3 cells across", node.span)
+        unit = next((item.unit for row in grid.rows for item in row if item.unit is not None), None)
+        dim = grid.rows[0][0].dim
+        raw = [[item.value for item in row] for row in grid.rows]
+        solved = solve_poisson(raw, rows)
+        return Matrix(tuple(tuple(Quantity(value, dim, unit) for value in row) for row in solved))
 
     def _derivative_function(self, node, scope: Scope, span):
         """`def f(t, y)`, or a bare expression using t and y, as a function of (t, y)."""
@@ -416,7 +443,7 @@ class Evaluator:
             function = self.eval(node, scope)
             if hasattr(function, "call"):
                 return function.call
-            raise ForgeEvalError("dsolve() needs a function such as def f(t, y) { ... }", span)
+            raise ForgeEvalError("solveODE() needs a function such as def f(t, y) { ... }", span)
         names = [n for n in S.names_in(node) if scope.get(n) is None]
         time_name = "t" if "t" in names else (names[0] if names else "t")
         value_name = "y" if "y" in names else (names[1] if len(names) > 1 else "y")
@@ -520,8 +547,10 @@ class Evaluator:
         tolerance = None
         if name == "limit":
             return self._limit(node, scope)
-        if name == "dsolve":
-            return self._dsolve(node, scope)
+        if name == "solveODE":
+            return self._solveODE(node, scope)
+        if name == "solvePDE":
+            return self._solve_pde(node, scope)
         if name == "surface":
             xs, ys = [self.eval(a, scope) for a in node.args[1:]]
             first = node.args[0]
@@ -704,7 +733,7 @@ def truth(value, span=None) -> bool:
 
 COMPARISONS = ("==", "!=", "<=", ">=", "<", ">")
 CALLBACK_FUNCTIONS = frozenset({"integrate", "derivative", "roots", "fzero", "minimize", "surface",
-                               "limit", "dsolve"})
+                               "limit", "solveODE", "solvePDE"})
 FILE_FUNCTIONS = frozenset({"readtable", "csvwrite"})
 
 

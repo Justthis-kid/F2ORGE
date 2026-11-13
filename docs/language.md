@@ -164,7 +164,8 @@ number.
 | `diff(x^2)` | Symbolic derivative, returned as text: `diff(x * sin(x))` is `sin(x) + x * cos(x)`. |
 | `trapz(y)`, `trapz(x, y)` | Trapezoidal integral of sampled data, with the units of x times y. |
 | `limit(x^2, 2)`, `limit(sin(x)/x, 0)` | The value an expression approaches; 0/0 shapes are resolved with l'Hôpital's rule. |
-| `dsolve(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)` and return `<times, values>`; adaptive Dormand-Prince 5. |
+| `solveODE(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)` and return `<times, values>`; adaptive Dormand-Prince 5. |
+| `solvePDE(grid)` | Relax a square grid of boundary values to steady state; plots as a heatmap. |
 | `fzero(f, a, b)`, `minimize(f, a, b)` | A root inside a bracket, and the minimum (returns `<x, f(x)>`). |
 | `roots(<c, b, a>)` | Real roots of `c + b x + a x² + ...`, from the constant term upward. |
 | `surface(f, xs, ys)` | Sample `f(x, y)` over a grid into a matrix for `plot(..., kind = "surface")`. |
@@ -422,31 +423,49 @@ csvwrite("reports/summary.csv", t)   # folders are created as needed
 
 ## Differential equations
 
-`dsolve(f, y0, t0, t1)` integrates `dy/dt = f(t, y)` from `t0` to `t1`, starting at `y0`, and
-returns two vectors: the times and the values. Its adaptive Runge-Kutta-Fehlberg step (the family
-behind MATLAB's `ode45`) keeps the error near 1e-7 and produces about 200 samples, so the result
-plots directly.
+`solveODE(f, y0, t0, t1)` integrates `dy/dt = f(t, y)` from `t0` to `t1`, starting at `y0`, and
+returns two vectors: the times and the values. Its adaptive Dormand-Prince step keeps the error near
+1e-7 and produces about 200 samples, so the result plots directly.
 
 ```forge
 def accel(t, v) { return -9.81 m/s^2 }
-fall = dsolve(accel, 20 m/s, 0 s, 4 s)
+fall = solveODE(accel, 20 m/s, 0 s, 4 s)
 n = count(fall[1])
 fall[1][n - 1]        # -19.24 m/s, the velocity after four seconds
 fall[0][n - 1]        # 4 s
-plot(fall[0], fall[1])
+plot(fall[0], fall[1])   # a velocity-versus-time graph
 ```
 
 The derivative is a function of time first and the value second, `f(t, y)`. A bare expression works
-too, using `t` and `y`: `dsolve(-9.81 m/s^2, 20 m/s, 0 s, 4 s)`. Units flow through: the value
-carries `y0`'s unit, and the derivative must measure that unit per second, so passing a velocity
-derivative as an acceleration is reported as a unit mismatch rather than silently accepted.
+too, using `t` and `y`: `solveODE(-9.81 m/s^2, 20 m/s, 0 s, 4 s)`. Units flow through: the value
+carries `y0`'s unit, and the derivative must measure that unit per second, so a derivative in newtons
+is reported as a unit mismatch rather than silently accepted.
 
 Decay and growth need a rate constant, which is an inverse unit:
 
 ```forge
 def dv(t, v) { return -0.5 1/s * v }
-r = dsolve(dv, 10 m/s, 0 s, 2 s)     # 10 e^-t, about 3.6788 m/s at t = 2 s
+r = solveODE(dv, 10 m/s, 0 s, 2 s)     # 10 e^-t, about 3.6788 m/s at t = 2 s
 ```
+
+For a steady field over a surface — heat conduction, electrostatics, seepage — `solvePDE(grid)`
+relaxes a square matrix to its steady state. The edge values are the boundary conditions and the
+result keeps their units:
+
+```forge
+plate = [[100 C, 100 C, 100 C, 100 C, 100 C],
+         [0 C, 0 C, 0 C, 0 C, 0 C],
+         [0 C, 0 C, 0 C, 0 C, 0 C],
+         [0 C, 0 C, 0 C, 0 C, 0 C],
+         [0 C, 0 C, 0 C, 0 C, 0 C]]
+steady = solvePDE(plate)
+steady[2][2]                     # 25 C, the midpoint of a plate with one warm edge
+plot(steady, kind = "heatmap")
+```
+
+These are F²ORGE's own names, not MATLAB's: `solveODE` replaces `ode45` and `solvePDE` stands in
+for `pdepe`. MATLAB's `dsolve` solves equations symbolically, so this language uses a different word
+to avoid suggesting a symbolic engine.
 
 ## Graph export
 

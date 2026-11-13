@@ -132,6 +132,29 @@ units of y: distance times force gives joules. `diff()` returns the derivative a
 it an expression, but still returns neighbouring differences when you give it a vector. `limit()`
 handles the 0/0 shapes a calculus class meets, and says plainly when a limit does not exist.
 
+## Lesson 5c — Simulate something over time
+
+When a quantity changes according to its own rate, describe the rate and let `solveODE` step it
+forward:
+
+```forge
+def accel(t, v) { return -9.81 m/s^2 }
+fall = solveODE(accel, 20 m/s, 0 s, 4 s)
+plot(fall[0], fall[1])
+```
+
+The function's arguments are time first and the value second. The result is two vectors — the times
+and the values — so you can plot it, index it, or measure it with `trapz`. A rate that depends on the
+value models decay:
+
+```forge
+def dv(t, v) { return -0.5 1/s * v }
+r = solveODE(dv, 10 m/s, 0 s, 2 s)
+```
+
+**Think about it:** why does the acceleration not need to mention `t` or `v`? What would `solveODE`
+do with `-9.81 m/s^2` swapped for `-9.81 m/s^3 * t`?
+
 ## Lesson 6 — Plot an equation sweep
 
 The graph command evaluates a callable equation repeatedly across a range:

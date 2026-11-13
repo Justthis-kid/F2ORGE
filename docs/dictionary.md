@@ -100,6 +100,8 @@ unit compounds tightly (`kg*m/s^2`) and expression operators with spaces (`10 m 
 | `readtable("data.csv")`, `csvwrite("out.csv", table)` | Read a CSV file into a table, or write one back. Paths are relative to the program. |
 | `integrate(f, a, b)`, `derivative(f, x)` | Numeric calculus on a function or a bare expression such as `x^2`. |
 | `fzero(f, a, b)`, `minimize(f, a, b)`, `roots(coeffs)` | Root finding and minimisation. |
+| `solveODE(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)`; returns `<times, values>`. |
+| `solvePDE(grid)` | Relax a square grid to steady state (heat, electrostatics); plots as a heatmap. |
 | `surface(f, xs, ys)` | Sample a two-variable function into a grid matrix. |
 | `db`, `undb`, `dbm` | Decibel ratios and power levels. |
 | `pH`, `fromPH` | pH from a concentration and the reverse. |
