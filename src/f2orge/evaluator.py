@@ -98,15 +98,16 @@ class GridFunction:
         self.scope = scope
         self.names = list(names)
 
-    def call(self, first, second) -> object:
+    def call(self, *arguments) -> object:
+        """Evaluate the expression with each name bound to the matching argument."""
         values = dict(self.scope.values)
-        values[self.names[0]] = first
-        values[self.names[1]] = second
+        for name, value in zip(self.names, arguments):
+            values[name] = value
         return self.evaluator.eval(
             self.expression, Scope(values, self.scope.excluded, self.scope.constants))
 
     def __str__(self) -> str:
-        return f"function of {self.names[0]} and {self.names[1]}"
+        return "function of " + " and ".join(self.names)
 
 
 class PartialFunction:
@@ -153,7 +154,7 @@ ARITY = {
     "format": (1, 99), "text": (1, 1), "char": (1, 1), "ascii": (1, 1), "upper": (1, 1), "lower": (1, 1),
     "integrate": (2, 4), "derivative": (2, 2), "roots": (1, 1), "fzero": (2, 3), "minimize": (2, 3),
     "surface": (3, 3), "readtable": (1, 1), "csvwrite": (2, 2), "limit": (2, 2), "solveODE": (4, 4),
-    "solvePDE": (1, 3),
+    "solvePDE": (1, 3), "fminsearch": (2, 2), "linprog": (2, 4),
 }
 FUNCTIONS = tuple(ARITY)
 
@@ -437,6 +438,74 @@ class Evaluator:
         solved = solve_poisson(raw, rows)
         return Matrix(tuple(tuple(Quantity(value, dim, unit) for value in row) for row in solved))
 
+    def _fminsearch(self, node: S.Call, scope: Scope):
+        """fminsearch(f, start): minimise f over several variables from a starting vector."""
+        from .mathlib import nelder_mead
+
+        start = self.eval(node.args[1], scope)
+        if not isinstance(start, Vector) or not start.items:
+            raise ForgeEvalError("fminsearch() needs a starting vector of values", node.span,
+                                 hint="Write: fminsearch(cost, <1, 1>)")
+        if any(not isinstance(item, Quantity) for item in start.items):
+            raise ForgeEvalError("fminsearch() needs a starting vector of numbers", node.span)
+        dimensions = [item.dim for item in start.items]
+        function = self.multi_variable_function(node.args[0], scope, len(start.items), node.span)
+        units = [item.unit for item in start.items]
+
+        def cost(point: List[float]) -> float:
+            args = [Quantity(value, dim, unit) for value, dim, unit in zip(point, dimensions, units)]
+            result = function(*args)
+            if not isinstance(result, Quantity):
+                raise ForgeEvalError("fminsearch() needs a function that returns a number", node.span)
+            if not result.dim.is_dimensionless:
+                raise UnitError("fminsearch() needs a cost with no unit", node.span,
+                                hint="Divide by a reference quantity so the cost is a plain number.")
+            return result.value
+
+        best, value = nelder_mead(cost, [item.value for item in start.items])
+        return Vector(tuple(Quantity(v, dim, unit) for v, dim, unit in zip(best, dimensions, units)))
+
+    def multi_variable_function(self, node, scope: Scope, count: int, span):
+        """`def cost(x, y)`, or a bare expression over count free names, as a function of them."""
+        if isinstance(node, (S.Name, S.Call)):
+            function = self.eval(node, scope)
+            if hasattr(function, "call"):
+                return function.call
+            raise ForgeEvalError("this needs a function such as def cost(x, y) { ... }", span)
+        free = [n for n in S.names_in(node) if scope.get(n) is None][:count]
+        while len(free) < count:
+            free.append(f"v{len(free) + 1}")
+        return GridFunction(node, self, scope, free).call
+
+    def _linprog(self, node: S.Call, scope: Scope):
+        """linprog(cost, constraints, bounds): maximise a linear objective for non-negative x.
+
+        `constraints` is a matrix whose rows hold coefficients and `bounds` the right-hand sides
+        of `sum(a_i x_i) <= b`.  The optional third argument is "max" (the default) or "min".
+        """
+        from .mathlib import simplex_linear
+
+        objective = self.eval(node.args[0], scope)
+        matrix = self.eval(node.args[1], scope)
+        bounds = self.eval(node.args[2], scope) if len(node.args) > 2 else None
+        if isinstance(matrix, Matrix) and bounds is None:
+            bounds = Vector(tuple(row[-1] for row in matrix.rows))
+            matrix = Matrix(tuple(row[:-1] for row in matrix.rows))
+        if not isinstance(objective, Vector) or not isinstance(matrix, Matrix) or \
+                not isinstance(bounds, Vector):
+            raise ForgeEvalError("linprog() needs a cost vector, a constraint matrix, and bounds",
+                                 node.span, hint='Write: linprog(<3, 2>, [[1, 1], [2, 1]], <4, 6>)')
+        sense = "max"
+        if len(node.args) > 3:
+            sense = as_text(self.eval(node.args[3], scope))
+        coefficients = [_scalar_in(item, "linprog") for item in objective.items]
+        rows = [[_scalar_in(item, "linprog") for item in row] for row in matrix.rows]
+        limits = [_scalar_in(item, "linprog") for item in bounds.items]
+        values, best = simplex_linear([c.value for c in coefficients],
+                                      [[c.value for c in row] for row in rows],
+                                      [c.value for c in limits], sense)
+        return Vector((Vector(tuple(Quantity(v) for v in values)), Quantity(best)))
+
     def _derivative_function(self, node, scope: Scope, span):
         """`def f(t, y)`, or a bare expression using t and y, as a function of (t, y)."""
         if isinstance(node, S.Name) or isinstance(node, S.Call):
@@ -551,6 +620,10 @@ class Evaluator:
             return self._solveODE(node, scope)
         if name == "solvePDE":
             return self._solve_pde(node, scope)
+        if name == "fminsearch":
+            return self._fminsearch(node, scope)
+        if name == "linprog":
+            return self._linprog(node, scope)
         if name == "surface":
             xs, ys = [self.eval(a, scope) for a in node.args[1:]]
             first = node.args[0]
@@ -733,7 +806,7 @@ def truth(value, span=None) -> bool:
 
 COMPARISONS = ("==", "!=", "<=", ">=", "<", ">")
 CALLBACK_FUNCTIONS = frozenset({"integrate", "derivative", "roots", "fzero", "minimize", "surface",
-                               "limit", "solveODE", "solvePDE"})
+                               "limit", "solveODE", "solvePDE", "fminsearch", "linprog"})
 FILE_FUNCTIONS = frozenset({"readtable", "csvwrite"})
 
 

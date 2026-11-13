@@ -166,7 +166,11 @@ number.
 | `limit(x^2, 2)`, `limit(sin(x)/x, 0)` | The value an expression approaches; 0/0 shapes are resolved with l'Hôpital's rule. |
 | `solveODE(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)` and return `<times, values>`; adaptive Dormand-Prince 5. |
 | `solvePDE(grid)` | Relax a square grid of boundary values to steady state; plots as a heatmap. |
+| `fminsearch(cost, start)` | Minimise a cost over several variables from a starting vector (Nelder-Mead). |
+| `linprog(cost, A, b, "max"\|"min")` | Optimise a linear objective under `A x <= b`, with non-negative x. |
 | `fzero(f, a, b)`, `minimize(f, a, b)` | A root inside a bracket, and the minimum (returns `<x, f(x)>`). |
+| `fminsearch(cost, start)` | Minimise a cost over several variables from a starting vector (Nelder-Mead). |
+| `linprog(cost, A, b, "max"\|"min")` | Optimise a linear objective under `A x <= b`, with non-negative x. |
 | `roots(<c, b, a>)` | Real roots of `c + b x + a x² + ...`, from the constant term upward. |
 | `surface(f, xs, ys)` | Sample `f(x, y)` over a grid into a matrix for `plot(..., kind = "surface")`. |
 | `db(x)`, `undb(level)`, `dbm(power)` | Decibel ratios, the inverse of `db`, and a power level in dBm above 1 mW. |
@@ -447,6 +451,34 @@ Decay and growth need a rate constant, which is an inverse unit:
 def dv(t, v) { return -0.5 1/s * v }
 r = solveODE(dv, 10 m/s, 0 s, 2 s)     # 10 e^-t, about 3.6788 m/s at t = 2 s
 ```
+
+## Optimisation
+
+`fminsearch(cost, start)` minimises a cost over several variables, starting from a vector. The cost
+must be a plain number (divide by a reference to remove units), and the answer comes back in the
+units of the starting vector:
+
+```forge
+def cost(x, y) { return (x - 3)^2 + (y + 1)^2 }
+fminsearch(cost, <0, 0>)          # <3, -1>
+
+# With physical variables: find the distance and speed that best fit a model.
+def error(d, v) { return (d / 1 m - 5)^2 + (v / 1 m/s - 2)^2 }
+fminsearch(error, <0 m, 0 m/s>)   # <5 m, 2 m/s>
+```
+
+`linprog(cost, A, b)` solves a linear program: maximise `cost · x` subject to `A x <= b` with every
+variable non-negative. `A` may be given without its right-hand side, as rows `[a1, a2, b]`. Pass
+`"min"` as a fourth argument to minimise instead:
+
+```forge
+linprog(<3, 2>, [[1, 1], [2, 1]], <4, 6>)   # <<2, 2>, 10>
+linprog(<3, 2>, [[1, 1, 4], [2, 1, 6]])     # the same, in the augmented form
+linprog(<1, 2>, [[1, 1]], <3>, "min")       # <<0, 0>, 0>
+```
+
+The result is a vector holding the variable values and then the objective's value there. A program
+that is unbounded, or whose bounds are negative, is reported rather than answered wrongly.
 
 For a steady field over a surface — heat conduction, electrostatics, seepage — `solvePDE(grid)`
 relaxes a square matrix to its steady state. The edge values are the boundary conditions and the

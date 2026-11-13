@@ -363,6 +363,7 @@ not block a dependable language and solver.
 | Script-level data files: `readtable()` and `csvwrite()` with unit-aware columns | Implemented |
 | Calculus: symbolic `diff()`, numeric `integrate`/`derivative`, `trapz()`, and `limit()` | Implemented |
 | Differential equations: `solveODE()` (adaptive RK45, plottable time series) and `solvePDE()` (steady-state fields) | Implemented |
+| Optimisation: `fminsearch()` over several variables and `linprog()` for linear programs | Implemented |
 | CLI execution, interactive shell, local files, and explanatory source locations | Implemented |
 | VS Code syntax highlighting | Available |
 | Vectors and matrices: arithmetic, products, transpose, inverse | Implemented; inverse is unit-aware for matrices whose units factor into rows and columns |

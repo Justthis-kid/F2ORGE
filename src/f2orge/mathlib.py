@@ -143,3 +143,103 @@ class Samples:
             "points": self.series[0][1],
             "series": [(label, points) for label, points in self.series],
         }
+
+
+def nelder_mead(f: Callable[[List[float]], float], start: List[float],
+                tolerance: float = 1e-10, iterations: int = 5000) -> Tuple[List[float], float]:
+    """Minimise f over several variables with the Nelder-Mead simplex method.
+
+    This is the algorithm behind MATLAB's fminsearch: no derivatives, a simplex of n+1 points that
+    reflects, expands, contracts, and shrinks toward the best corner.
+    """
+    n = len(start)
+    if n == 0:
+        raise ForgeEvalError("minimise() needs at least one variable")
+    step = [0.05 * (abs(value) if value else 1.0) for value in start]
+    simplex = [list(start)]
+    for i in range(n):
+        point = list(start)
+        point[i] += step[i]
+        simplex.append(point)
+    values = [f(point) for point in simplex]
+    for _ in range(iterations):
+        order = sorted(range(n + 1), key=lambda i: values[i])
+        simplex = [simplex[i] for i in order]
+        values = [values[i] for i in order]
+        spread = max(abs(values[0] - values[-1]),
+                     max(max(abs(a - b) for a, b in zip(simplex[0], point)) for point in simplex[1:]))
+        if spread <= tolerance:
+            break
+        centroid = [sum(point[i] for point in simplex[:-1]) / n for i in range(n)]
+        worst = simplex[-1]
+        reflected = [centroid[i] + (centroid[i] - worst[i]) for i in range(n)]
+        reflected_value = f(reflected)
+        if reflected_value < values[0]:
+            expanded = [centroid[i] + 2.0 * (centroid[i] - worst[i]) for i in range(n)]
+            expanded_value = f(expanded)
+            simplex[-1], values[-1] = (expanded, expanded_value) if expanded_value < reflected_value \
+                else (reflected, reflected_value)
+        elif reflected_value < values[-2]:
+            simplex[-1], values[-1] = reflected, reflected_value
+        else:
+            contracted = [centroid[i] + 0.5 * (worst[i] - centroid[i]) for i in range(n)]
+            contracted_value = f(contracted)
+            if contracted_value < values[-1]:
+                simplex[-1], values[-1] = contracted, contracted_value
+            else:  # shrink everything toward the best corner
+                best = simplex[0]
+                simplex = [best] + [[best[i] + 0.5 * (point[i] - best[i]) for i in range(n)]
+                                    for point in simplex[1:]]
+                values = [values[0]] + [f(point) for point in simplex[1:]]
+    best = min(range(n + 1), key=lambda i: values[i])
+    return simplex[best], values[best]
+
+
+def simplex_linear(objective: List[float], constraints: List[List[float]],
+                   bounds: List[float], sense: str = "max") -> Tuple[List[float], float]:
+    """Solve a linear program with the simplex method.
+
+    `objective` is the coefficient of each variable, each row of `constraints` is a constraint
+    `sum(a_i x_i) <= bounds[i]`, and every variable is non-negative.  `sense` is "max" or "min".
+    Returns the values of the variables and the objective there.
+    """
+    n = len(objective)
+    m = len(constraints)
+    if any(len(row) != n for row in constraints):
+        raise ForgeEvalError("each constraint needs one coefficient for every variable")
+    if len(bounds) != m:
+        raise ForgeEvalError("each constraint needs a bound")
+    sign = -1.0 if sense == "max" else 1.0  # the simplex minimises, so flip a maximisation
+    costs = [sign * c for c in objective]
+    # Slack variables turn each inequality into an equation; the basis starts as the slacks.
+    tableau = []
+    for i in range(m):
+        if bounds[i] < 0:
+            raise ForgeEvalError("linear programming needs non-negative bounds",
+                                 hint="Move a term to the other side so the right-hand side is positive.")
+        tableau.append(constraints[i] + [1.0 if j == i else 0.0 for j in range(m)] + [bounds[i]])
+    tableau.append(costs + [0.0] * m + [0.0])
+    width = n + m
+    basis = [n + i for i in range(m)]
+    for _ in range(500):
+        row = tableau[-1]
+        entering = min(range(width), key=lambda j: row[j])
+        if row[entering] >= -1e-12:
+            break  # no improving direction remains
+        ratios = [(tableau[i][width] / tableau[i][entering], i)
+                  for i in range(m) if tableau[i][entering] > 1e-12]
+        if not ratios:
+            raise ForgeEvalError("this linear program is unbounded", hint="Check the constraints.")
+        _, pivot_row = min(ratios)
+        pivot = tableau[pivot_row][entering]
+        tableau[pivot_row] = [value / pivot for value in tableau[pivot_row]]
+        for i in range(m + 1):
+            if i != pivot_row and abs(tableau[i][entering]) > 1e-15:
+                factor = tableau[i][entering]
+                tableau[i] = [value - factor * pv for value, pv in zip(tableau[i], tableau[pivot_row])]
+        basis[pivot_row] = entering
+    solution = [0.0] * n
+    for row, variable in enumerate(basis):
+        if variable < n:
+            solution[variable] = tableau[row][width]
+    return solution, sum(c * x for c, x in zip(objective, solution))

@@ -102,6 +102,8 @@ unit compounds tightly (`kg*m/s^2`) and expression operators with spaces (`10 m 
 | `fzero(f, a, b)`, `minimize(f, a, b)`, `roots(coeffs)` | Root finding and minimisation. |
 | `solveODE(f, y0, t0, t1)` | Integrate `dy/dt = f(t, y)`; returns `<times, values>`. |
 | `solvePDE(grid)` | Relax a square grid to steady state (heat, electrostatics); plots as a heatmap. |
+| `fminsearch(cost, start)` | Minimise a cost over several variables (Nelder-Mead). |
+| `linprog(cost, A, b, sense)` | Optimise a linear objective under `A x <= b`. |
 | `surface(f, xs, ys)` | Sample a two-variable function into a grid matrix. |
 | `db`, `undb`, `dbm` | Decibel ratios and power levels. |
 | `pH`, `fromPH` | pH from a concentration and the reverse. |
