@@ -1,0 +1,269 @@
+# F2ORGE feature tour: one script that exercises as much of the language as it can.
+# Run it with:  forge run tour.forge
+# Or paste it into the IDE (forge ide / forge browser) and press Run.
+
+# =====================================================================================
+# 1. Quantities, units, and conversions
+# =====================================================================================
+mass = 150 kg
+speed = 30 m/s
+accel = 9.81 m/s^2
+force = mass * accel            # prints as N, not kg*m/s^2
+force
+
+convert 10 ft -> m
+convert 60 mph -> m/s
+convert 25 degC -> K
+convert 3000 rpm -> rad/s
+
+push = 0.2 kN
+spring = 40 N/cm
+print "push:", push, " spring:", spring
+
+# =====================================================================================
+# 2. Vectors and matrices, indexing and slicing
+# =====================================================================================
+v = <1, 2, 3>
+w = <3, 2, 1>
+v + w                  # element-wise
+v * w                  # dot product
+2 * v                  # scaling
+v .* w                 # explicit element-wise product
+v^2                    # each element squared
+cross(v, w)
+sqrt(<1, 4, 9>)        # element-wise sqrt
+
+A = [
+  [1, 2]
+  [3, 4]
+]
+B = [[2, 0], [1, 2]]
+A * B                  # matrix product
+A * <1, 2>             # matrix-vector
+transpose(A)
+det(A)
+inverse(A)
+A.T
+M = [[1, 2], [3, 4]]
+M[:, 0]                # every row, first column
+v[1]                   # zero-based
+v[0:2]                 # first two
+
+# =====================================================================================
+# 3. Complex numbers (AC impedance)
+# =====================================================================================
+Z = 3 ohm + 4i ohm
+Z
+abs(Z)
+arg(Z)
+conj(Z)
+Z * 2 A
+sqrt(-1)               # i
+
+# =====================================================================================
+# 4. Equations, calls, solves, and simultaneous systems
+# =====================================================================================
+eq Force {
+    description = "Newton's second law"
+    m : kg "mass"
+    a : m/s^2 "acceleration"
+    F : N "force"
+    F = m * a
+}
+
+offEarth = Force(m = 150 kg, a = 9.81 m/s^2)
+offEarth
+Force(m = 2 kg, a = 3 m/s^2).F
+
+solve Force for a {
+    F = 100 N
+    m = 50 kg
+}
+
+eq Sum { u + w = s }
+eq Diff { u - w = d }
+solve Sum, Diff for u, w {
+    s = 10 m
+    d = 2 m
+}
+
+# =====================================================================================
+# 5. Control flow and functions
+# =====================================================================================
+total = 0
+for k in 1..5 {
+    total = total + k
+}
+print "1+2+3+4+5 =", total
+
+def area(r) {
+    return pi * r^2
+}
+area(2 m)
+
+def kinetic(m, v = 1 m/s) {
+    return 0.5 * m * v^2
+}
+kinetic(2 kg, 3 m/s)
+kinetic(2 kg)
+
+n = 0
+while n < 3 {
+    n = n + 1
+    if n == 2 {
+        continue
+    }
+}
+n
+
+grade = 78
+if grade >= 90 {
+    print "A"
+} elseif grade >= 80 {
+    print "B"
+} elseif grade >= 70 {
+    print "C"
+} else {
+    print "below C"
+}
+
+for name in <"x", "y", "z"> {
+    print "loop over text:", name
+}
+
+# =====================================================================================
+# 6. Calculus
+# =====================================================================================
+# Symbolic first: once a bare `x` has been used as a value (integrate's 2, say), later
+# bare expressions read that value instead of a variable, so the order matters.
+diff(x^3 + 2*x)                              # symbolic, returned as text
+limit(sin(x) / x, 0)
+integrate(x^2, 0 m, 2 m)
+derivative(x^2, 3)
+trapz(<0 m, 1 m, 2 m>, <0 N, 5 N, 0 N>)     # work, 5 J
+roots(<6, -5, 1>)                            # x^2 - 5x + 6
+fzero(x^2 - 4, 1, 3)
+minimize(x^2 + 1, -3, 3)
+
+# =====================================================================================
+# 7. Differential equations and steady-state fields
+# =====================================================================================
+# A derivative is a function of (time, value); the name must not already hold a value.
+def gravity(t, v) { return -9.81 m/s^2 }
+[t, vy] = solveODE(gravity, 20 m/s, 0 s, 4 s)
+count(t)
+vy[1]
+
+plate = [[100 degC, 100 degC, 100 degC],
+         [0 degC,   0 degC,   0 degC],
+         [0 degC,   0 degC,   0 degC]]
+steady = solvePDE(plate)
+steady[1][1]                    # the middle cell, warmed by the hot top edge
+
+# =====================================================================================
+# 8. Optimisation
+# =====================================================================================
+def cost(x, y) { return (x - 3)^2 + (y + 1)^2 }
+fminsearch(cost, <0, 0>)
+linprog(<3, 2>, [[1, 1], [2, 1]], <4, 6>)
+linprog(<2, 1>, [[1, 1]], <3>, "min")
+
+# =====================================================================================
+# 9. Signals
+# =====================================================================================
+tt = linspace(0 s, 1 s, 64)
+wave = sin(2 * pi * 8 Hz * tt)
+spec = fft(wave)
+freq = fftfreq(64, 1 s / 64)
+mag(spec[8])
+freq[8]
+[good, clear] = spectrum(wave, 1 s / 64, "hann")
+count(clear)
+smoothed = lowpass(wave, 20 Hz, 1 s / 64)
+count(smoothed)
+f8 = <100 Hz>
+[gain, phase] = bode(f8, 100 Hz)
+gain[0]
+phase[0]
+
+# =====================================================================================
+# 10. Statistics on data
+# =====================================================================================
+data = <2, 4, 4, 4, 5, 5, 7, 9>
+mean(data)
+std(data)
+pstd(data)
+median(data)
+percentile(data, 75)
+linreg(<1, 2, 3>, <2, 4, 7>)
+sum(data)
+cumsum(<1, 2, 3>)
+sort(<3, 1, 2>)
+
+# =====================================================================================
+# 11. Chemistry and logarithmic units
+# =====================================================================================
+pH(1e-7 mol/L)
+pH(0.01 mol/L)
+fromPH(2)
+db(100)
+dbm(1 W)
+undb(20 dB)
+
+# =====================================================================================
+# 12. Domain objects, built-in and custom
+# =====================================================================================
+r = Rocket(dryMass = 1200 kg, propellantMass = 2800 kg, isp = 311 s)
+r.wetMass
+r.deltaV
+r.burnTime(50 kN)
+
+mtr = Motor(torque = 2.5 N*m, speed = 3000 rpm)
+mtr.power
+mtr.torqueAt(1500 rpm)
+
+bat = Battery(capacity = 5 Ah, voltage = 11.1 V)
+bat.energy
+bat.runtime(10 A)
+
+object Car {
+    description = "A simple electric car"
+    mass : kg = 1500 kg "kerb mass"
+    v : m/s = 20 m/s "cruising speed"
+    energy() : J = 0.5 * mass * v^2 "kinetic energy"
+    distance(seconds : s) : m = v * seconds "how far it travels"
+}
+car = Car()
+car.energy
+car.distance(3 s)
+lighter = Car(mass = 900 kg)
+lighter.energy
+
+# =====================================================================================
+# 13. Comparing quantities
+# =====================================================================================
+3 km > 2500 m                    # unit-safe comparison of like kinds
+compare_mag(3, 2 m)              # 1: size only
+less_mag(3, 2 m)                 # false
+greater_equal_mag(5 s, 3 kg)     # true
+
+# =====================================================================================
+# 14. Plotting from a script
+# =====================================================================================
+speeds = linspace(0 m/s, 30 m/s, 31)
+powers = 0.5 * 1.2 kg/m^3 * 2 m^2 * 0.3 * speeds^3
+plot(speeds, powers)
+plot(t, vy)
+
+# =====================================================================================
+# 15. Worksheets (they appear in the IDE's Worksheets tab after a run)
+# =====================================================================================
+worksheet Flight {
+    description = "Newton's second law, live"
+    input mass : kg = 150 kg "Vehicle mass"
+    input acceleration : m/s^2 = 9.81 m/s^2 "Acceleration"
+    output force = mass * acceleration
+    graph force over acceleration from 0 m/s^2 to 20 m/s^2
+}
+
+print "Tour finished."

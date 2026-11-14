@@ -286,6 +286,25 @@ unit-aware output and graph update automatically. The `output` declaration names
 quantity; `graph` sweeps acceleration across the specified range. Edit the Forge source to change
 the worksheet definition, then run it again to refresh the IDE view.
 
+## One script that shows everything
+
+[`examples/tour.forge`](../examples/tour.forge) is a single program that exercises most of the
+language: units and conversions, vectors, matrices and slicing, complex numbers, equations, calls,
+solves and simultaneous systems, control flow and functions, calculus, differential equations, a
+steady-state field, optimisation, signals, statistics, chemistry, the built-in and custom domain
+objects, magnitude comparisons, plots, and a worksheet. Run it with
+`forge run examples/tour.forge`, or paste it into the IDE and press Run.
+
+Two things about it are worth knowing, because both are real rules of the language rather than
+accidents of the tour:
+
+* `diff(x^3)` and `limit(sin(x) / x, 0)` treat a bare `x` as the calculus variable only while `x`
+  holds no value. Once a program assigns `x` — a `solve` does, since it stores its answers — a later
+  bare `x` is that value. The tour differentiates before it solves, and uses `u` and `w` in its
+  system, so it never trips over this.
+* A function name is shadowed once a variable takes it. `solveODE(gravity, ...)` works, but
+  `accel = 9.81 m/s^2` followed by `solveODE(accel, ...)` does not, because `accel` is now a value.
+
 ## Review questions
 
 1. What unit should acceleration use in `F = m * a` if mass is in kilograms and force in newtons?

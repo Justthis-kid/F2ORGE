@@ -26,6 +26,8 @@ solve Force for a {
 ## Learn and reference
 
 - [Guided tutorial](docs/tutorial.md) — a sequence of lessons, examples, and review questions.
+- [`examples/tour.forge`](examples/tour.forge) — one runnable script that exercises most of the
+  language, from units and matrices through calculus, signals, domain objects, and plots.
 - [Language reference](docs/language.md) — syntax and behavior for scripts, units, equations, solving,
   vectors, matrices, graphing, and calculators.
 - [Language dictionary](docs/dictionary.md) — built-in vocabulary, functions, constants, unit names,

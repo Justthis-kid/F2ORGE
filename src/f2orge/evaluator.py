@@ -1562,5 +1562,5 @@ def _complex_part(name: str, q: Quantity) -> object:
     if name == "arg":
         if value == 0:
             raise ForgeEvalError("arg() of zero has no phase angle")
-        return Quantity(cmath.phase(value), ANGLE)
+        return Quantity(cmath.phase(value), ANGLE, unit_named("rad"))  # an angle, like atan()
     return Quantity(complex(value.real, -value.imag), q.dim, keep)

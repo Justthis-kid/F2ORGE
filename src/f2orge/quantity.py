@@ -202,9 +202,12 @@ class Quantity:
             return format_value(self.magnitude(self.unit), text)
         if self.dim.is_dimensionless:
             return format_value(self.value)
-        if self.dim == ANGLE and not isinstance(self.value, complex):
+        if self.dim == ANGLE:
             return format_value(self.value)  # a bare radian value: radians are the natural measure
-        return f"{format_value(self.value)} {Unit.from_dim(self.dim).symbol()}"
+        text = Unit.from_dim(self.dim).symbol()
+        # A complex value carries its unit on both parts: `6 + 8i V`, as an impedance is written.
+        return format_value(self.value, text) if isinstance(self.value, complex) \
+            else f"{format_value(self.value)} {text}"
 
     def __repr__(self) -> str:
         return f"Quantity({self})"
