@@ -824,8 +824,10 @@ Syntax highlighting and code completion are not included yet.
 
 Run `forge browser` to open the local browser-based IDE at `http://127.0.0.1:8765`; `forge web`
 is an alias. The application is served on loopback by the local F²ORGE process and does not use a
-cloud service or remote assets. It includes a script editor, command window, workspace list, and a
-Blueprint canvas with draggable, connectable, deletable, resizable nodes. A **Script** node accepts
+cloud service or remote assets. It includes a script editor, command window, workspace list (with a
+live **Objects** group for domain types), **Trace** and **Profile** buttons that report what the
+current script runs and where its time goes (the same reports `forge trace` and `forge profile`
+print), and a Blueprint canvas with draggable, connectable, deletable, resizable nodes. A **Script** node accepts
 arbitrary supported F²ORGE statements, including equation definitions, imports, solves, conversions,
 prints, assignments, and expressions. Script nodes run before Output nodes, so graph Inputs can
 consume variables created by script blocks. Connect typed nodes for visual expression building.

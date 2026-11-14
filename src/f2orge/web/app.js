@@ -311,10 +311,26 @@
 
   function setBusy(value) {
     busy = value;
-    for (const button of [$("#run-script"), $("#run-graph"), $("#export-script"), $(".command-submit")]) {
+    for (const button of [$("#run-script"), $("#trace-script"), $("#profile-script"),
+                          $("#run-graph"), $("#export-script"), $(".command-submit")]) {
       button.disabled = value;
     }
     $("#run-script").innerHTML = value ? "Running…" : '<span class="play-icon">▶</span> Run <kbd>Ctrl ↵</kbd>';
+  }
+
+  async function debugScript(path, label) {
+    // The IDE's Trace and Profile buttons: the same reports `forge trace` and `forge profile` give.
+    if (busy) return;
+    setBusy(true);
+    pushConsole(label, "command");
+    try {
+      const result = await request(path, { source: editor.value });
+      appendOutput(result.output, result.success);
+    } catch (error) {
+      appendOutput(error.message, false);
+    } finally {
+      setBusy(false);
+    }
   }
 
   async function request(path, body) {
@@ -1082,6 +1098,8 @@
   $("#refresh-worksheets").addEventListener("click", refreshState);
   document.querySelectorAll(".node-add").forEach((button) => button.addEventListener("click", () => addNode(button.dataset.node)));
   $("#run-script").addEventListener("click", () => runSource(editor.value));
+  $("#trace-script").addEventListener("click", () => debugScript("/api/trace", "Trace"));
+  $("#profile-script").addEventListener("click", () => debugScript("/api/profile", "Profile"));
   $("#run-graph").addEventListener("click", () => {
     try { runSource(compileGraph()); }
     catch (error) { setStatus(error.message); appendOutput(error.message, false); }

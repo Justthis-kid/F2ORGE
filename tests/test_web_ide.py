@@ -9,6 +9,7 @@ from urllib.request import Request, urlopen
 from f2orge.desktop import DesktopSession
 from f2orge.errors import ForgeError
 from f2orge.web_ide import _LoopbackServer, _handler, serve_desktop_ide
+from helpers import ROOT
 
 
 def test_browser_ide_serves_offline_assets_and_local_kernel():
@@ -301,3 +302,37 @@ def test_desktop_ide_reports_webview_startup_errors(monkeypatch):
         assert "no supported runtime" in error.message
     else:
         raise AssertionError("desktop IDE should report webview startup errors")
+
+
+def test_trace_and_profile_endpoints_match_the_desktop_commands():
+    """The browser IDE's Trace and Profile buttons use the same code as forge trace/profile."""
+    server = _LoopbackServer(("127.0.0.1", 0), _handler(DesktopSession()))
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    base_url = f"http://127.0.0.1:{server.server_port}"
+    source = "total = 0\nfor k in 1..3 {\n    total = total + k\n}\ntotal\n"
+    try:
+        payload = json.dumps({"source": source}).encode("utf-8")
+        request = Request(f"{base_url}/api/trace", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            trace = json.loads(response.read())
+        assert trace["success"] is True
+        assert "assignment" in trace["output"] and "statements ran" in trace["output"]
+
+        request = Request(f"{base_url}/api/profile", payload, {"Content-Type": "application/json"})
+        with urlopen(request) as response:
+            profile = json.loads(response.read())
+        assert profile["success"] is True
+        assert "calls" in profile["output"] and "total" in profile["output"]
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=2)
+
+
+def test_the_browser_ide_offers_every_button_the_desktop_ide_has():
+    page = (ROOT / "src" / "f2orge" / "web" / "index.html").read_text(encoding="utf-8")
+    script = (ROOT / "src" / "f2orge" / "web" / "app.js").read_text(encoding="utf-8")
+    for button in ("run-script", "trace-script", "profile-script", "save-file", "run-graph"):
+        assert f'id="{button}"' in page, button
+    assert "/api/trace" in script and "/api/profile" in script

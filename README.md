@@ -166,8 +166,9 @@ python -m f2orge run examples/force.forge
 
 `forge browser` starts a browser-based engineering workspace at `http://127.0.0.1:8765` and opens
 it automatically. It is served only from your own computer; no cloud service or external assets are
-used. The browser workspace includes a script editor, persistent command window, variable/equation
-list, Blueprint canvas, table-based Chart Studio, native engineering worksheets, and a softer dark
+used. The browser workspace includes a script editor, persistent command window, variable/equation/
+object list, Blueprint canvas, table-based Chart Studio, native engineering worksheets, **Trace** and
+**Profile** buttons for stepping and timing the current script, and a softer dark
 theme. Declare worksheets directly in `.forge` source with `worksheet`, `input`, `output`, and
 optional `graph` declarations; running the source creates live unit-aware controls in the
 **Worksheets** tab. See [the language reference](docs/language.md#native-engineering-worksheets) and

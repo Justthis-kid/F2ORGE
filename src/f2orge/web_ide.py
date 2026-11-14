@@ -166,7 +166,7 @@ def _handler(session: DesktopSession):
                 return
             if self.path not in (
                 "/api/execute", "/api/transpile", "/api/plot", "/api/plot-svg", "/api/chart",
-                "/api/worksheet",
+                "/api/worksheet", "/api/trace", "/api/profile",
             ):
                 self._send(404, "text/plain; charset=utf-8", b"Not found")
                 return
@@ -300,6 +300,26 @@ def _handler(session: DesktopSession):
                     return
                 self._json(200, {"success": True, "output": generated, "target": target,
                                  "binary": binary})
+                return
+            if self.path in ("/api/trace", "/api/profile"):
+                # The desktop IDE's :trace and :profile, on the same code the CLI uses.
+                from .debug import profile, trace_of
+
+                base = session.interpreter._dirs[-1]
+                try:
+                    if self.path == "/api/trace":
+                        frames = trace_of(source, "<editor>", base_dir=base)
+                        lines = [f"{frame.line:>4}  {frame.kind:<11} {frame.source.strip()}"
+                                 for frame in frames]
+                        lines.append(f"{len(frames)} statements ran")
+                        self._json(200, {"success": True, "output": "\n".join(lines)})
+                    else:
+                        result = profile(source, "<editor>", base_dir=base)
+                        self._json(200, {"success": result.error is None,
+                                         "output": result.report() + (
+                                             "\n" + result.error.format() if result.error else "")})
+                except ForgeError as err:
+                    self._json(200, {"success": False, "output": err.format()})
                 return
             if self.path == "/api/plot-svg":
                 from .plot import render_svg
