@@ -83,20 +83,25 @@ environment again whenever you open a new terminal.
 
 ### 2. Launch F²ORGE
 
-Run a program, start the interactive shell, or ask for help:
+Run a program, start the interactive shell, run a script step by step, or open an IDE:
 
 ```text
-forge run examples/force.forge
+forge run examples/tour.forge          # every feature in one script
+forge run examples/objects.forge       # Rocket, Motor, Battery, and a custom object
+forge run examples/basics.forge        # quantities, conversions, solving
+forge run examples/glider.forge        # a worked engineering example
 forge shell
-forge ide
-forge browser
-forge transpile examples/force.forge --target python -o force.py
-forge transpile examples/force.forge --target cpp -o force.cpp
-forge transpile examples/force.forge --target micropython -o force-mpy.py
-forge transpile examples/force.forge --target ti-basic -o force.8xp
-forge transpile examples/force.forge --target ti-basic -o force.ti.txt
+forge trace examples/tour.forge        # every statement it runs, in order
+forge trace examples/tour.forge --kind print
+forge profile examples/tour.forge      # where its time goes, per source line
+forge ide                              # offline desktop IDE
+forge browser                          # browser IDE at http://127.0.0.1:8765
 forge --help
 ```
+
+To convert a script to another language, write an offline calculator, or draw a graph, use
+`forge transpile`, `forge calc`, and `forge graph` further down; each takes a `.forge` or `.eq` file
+from `examples/` and writes one output file.
 
 `forge ide` opens the offline desktop IDE in an embedded webview, reusing the browser IDE UI and its
 MATLAB-style workspace, script editor, command window, and complete Blueprint canvas. Install the
@@ -121,9 +126,18 @@ requires no internet access. On Windows, backslashes in file paths work too (for
 
 Use the **Convert to** selector in the IDE to generate and download Python, C++, MicroPython, or
 TI-84 BASIC from the current script. The same conversion is available from the CLI with
-`forge transpile FILE.forge --target python|cpp|micropython|ti-basic [-o OUTPUT]`. Conversion
-currently supports scalar assignments, arithmetic, scientific functions, constants, `print`, and
-`convert`. Unit literals and physical constants become SI numeric values; generated code does not
+`forge transpile FILE.forge --target python|cpp|micropython|ti-basic [-o OUTPUT]`, for example:
+
+```text
+forge transpile examples/basics.forge --target python -o force.py
+forge transpile examples/basics.forge --target cpp -o force.cpp
+forge transpile examples/basics.forge --target micropython -o force-mpy.py
+forge transpile examples/basics.forge --target ti-basic -o force.ti.txt
+forge transpile examples/basics.forge --target ti-basic -o force.8xp
+```
+
+`examples/basics.forge` is the scalar-only example the converter accepts. Conversion currently
+supports scalar assignments, arithmetic, scientific functions, constants, `print`, and `convert`. Unit literals and physical constants become SI numeric values; generated code does not
 retain F²ORGE's dimensional checks. Equation definitions, solves, imports, and vectors/matrices are
 rejected with a source-located explanation rather than silently altered. MicroPython output uses
 only `math` and built-ins, including a portable base-10 logarithm expression, and targets the
@@ -133,7 +147,7 @@ non-running variable map. Write the output to a `.8xp` name to get a tokenized c
 instead of text:
 
 ```text
-forge transpile program.forge --target ti-basic -o program.8xp
+forge transpile examples/basics.forge --target ti-basic -o program.8xp
 ```
 
 The `.8xp` file carries the TI variable header, the tokenized program and its checksum, so TI Connect
@@ -253,6 +267,7 @@ equations, browse `src/f2orge/stdlib/`. Generate equation documentation or check
 ```text
 forge doc Lift
 forge doc Lift -o Lift.md
+forge doc examples/formulas/Drag.eq -o Drag.md
 forge check examples/formulas/Drag.eq
 ```
 
@@ -335,19 +350,26 @@ The same F²ORGE commands are available in the VS Code terminal on Windows, macO
 ### Quick command reference
 
 ```text
-forge run FILE.forge [--explain]     Run a program; plot statements write graph files
-forge shell                          Start the interactive shell
-forge ide                            Launch the offline desktop editor
-forge check FILE...                  Parse and unit-check equation files
-forge doc EQUATION [-o FILE.md]      Generate equation documentation
-forge calc EQUATION [-o FILE.html]   Export an offline calculator; --desktop opens a window
-forge graph EQUATION ...             Export SVG, PNG, or PDF; --window opens an interactive plot
-forge plot FILE.forge Y [--x X]      Plot script vectors interactively or export HTML
+forge run FILE.forge [--explain]      Run a program; plot statements write graph files
+forge shell                           Start the interactive shell
+forge trace FILE.forge [--kind K]     Show every statement a program runs
+forge profile FILE.forge [--runs N]   Report the time each source line takes
+forge ide                             Launch the offline desktop IDE
+forge browser [--port N] [--no-open]  Launch the browser IDE on loopback
+forge check FILE...                   Parse and unit-check equation files
+forge doc EQUATION [-o FILE.md]       Generate equation documentation
+forge calc EQUATION [-o FILE.html]    Export an offline calculator; --desktop opens a window
+forge graph EQUATION ...              Export SVG, PNG, or PDF; --window opens an interactive plot
+forge plot FILE.forge Y [--x X]       Plot script vectors interactively or export HTML
 forge transpile FILE --target TARGET  Generate Python, C++, MicroPython, or TI-84 BASIC
-                                      (-o program.8xp writes a tokenized TI-84 program)
-forge units [FILTER]                 List built-in units
-forge --version                      Print the installed version
+                                       (-o program.8xp writes a tokenized TI-84 program)
+forge units [FILTER]                  List built-in units
+forge --version                       Print the installed version
 ```
+
+Every command takes a file from `examples/`: `tour.forge` exercises the whole language,
+`objects.forge` shows the domain objects, `basics.forge` covers quantities and solving,
+`glider.forge` is a worked example, and `formulas/Drag.eq` is a single equation file.
 
 ## Feature scope
 
