@@ -33,3 +33,18 @@ def test_the_readme_launch_block_names_the_tour_and_the_debug_commands():
     for line in ("examples/tour.forge", "examples/objects.forge", "forge trace", "forge profile",
                  "forge ide", "forge browser"):
         assert line in launch, line
+def test_the_tour_uses_the_element_wise_operator_it_labels():
+    """`v .* w` and `v * w` are different operations; the tour must not lose the dot."""
+    source = (ROOT / "examples" / "tour.forge").read_text(encoding="utf-8")
+    assert "v .* w" in source, "the element-wise product lost its dot"
+    # A bare expression (not an assignment, block edge, or call) should not appear twice; a
+    # duplicated line is what `v * w` was when the dot was dropped, and it silently re-tests the
+    # dot product instead of the element-wise product.
+    expressions = []
+    for line in source.splitlines():
+        code = line.split("#")[0].strip()
+        if not code or code in ("}", "{") or code.endswith(("{", "}")) or "=" in code:
+            continue
+        expressions.append(code)
+    for index, line in enumerate(expressions):
+        assert line not in expressions[index + 1:], f"the tour repeats the expression {line!r}"
