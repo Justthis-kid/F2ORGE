@@ -799,9 +799,12 @@ inputs change. Use `:help` for a reminder, `:values` to inspect current values, 
 
 ## Offline desktop IDE
 
-Run `forge ide` to open the offline desktop IDE, embedded in a native webview and sharing the
-browser IDE interface and Blueprint implementation. Install its optional dependency with
-`pip install "f2orge[desktop]"`; Windows also requires the Microsoft WebView2 runtime. Open or save
+Run `forge ide` to open the offline desktop IDE. It tries an embedded webview first, then the
+Tkinter editor, then the browser IDE, so it opens something even when an optional package is
+missing; `--ui webview|tk|browser` picks one deliberately. The webview shares the browser IDE
+interface and Blueprint implementation and needs `pip install "f2orge[desktop]"`; Windows also
+requires the Microsoft WebView2 runtime. The Tkinter editor is Python's built-in GUI and needs no
+other package. Open or save
 `.forge` and `.eq` files, then
 press **Run** or **F5** to execute it. The workspace shows variables and equations; the command
 window runs expressions and assignments in the same session, with Up/Down command history. Use

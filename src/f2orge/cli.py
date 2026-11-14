@@ -488,13 +488,42 @@ def cmd_profile(args) -> int:
     return 0
 
 
-def cmd_ide(_args) -> int:
-    from .web_ide import serve_desktop_ide
+def cmd_ide(args) -> int:
+    """Launch the desktop IDE: an embedded webview, the Tkinter editor, or the browser.
+
+    `--ui` picks one deliberately.  Without it the webview is tried first (one window, no external
+    browser), then the Tkinter editor, then the local browser IDE, so the command opens something
+    on every machine instead of failing when an optional package is missing.
+    """
+    choice = getattr(args, "ui", "auto") or "auto"
+    if choice in ("webview", "auto"):
+        from .web_ide import serve_desktop_ide
+
+        try:
+            serve_desktop_ide()
+            return 0
+        except ForgeError as err:
+            if choice == "webview":
+                _report(err)
+                return 1
+            print(f"note: {err.message}; trying the Tkinter editor", file=sys.stderr)
+    if choice in ("tk", "auto"):
+        from .desktop import launch_desktop_ide
+
+        try:
+            launch_desktop_ide()
+            return 0
+        except ForgeError as err:
+            if choice == "tk":
+                _report(err)
+                return 1
+            print(f"note: {err.message}; opening the browser IDE", file=sys.stderr)
+    from .web_ide import serve_browser_ide
 
     try:
-        serve_desktop_ide()
-    except ForgeError as err:
-        _report(err)
+        serve_browser_ide()
+    except OSError as err:
+        print(f"error: cannot start the browser IDE: {err}", file=sys.stderr)
         return 1
     return 0
 
@@ -606,8 +635,13 @@ def build_parser() -> argparse.ArgumentParser:
                    help="build a standalone one-file Windows calculator app (requires PyInstaller)")
     c.set_defaults(func=cmd_calc)
 
-    ide = sub.add_parser("ide", help="launch the offline desktop IDE",
-                         description="Launch the offline IDE in an embedded webview.")
+    ide = sub.add_parser(
+        "ide", help="launch the offline desktop IDE",
+        description=("Launch the offline IDE. Without --ui, an embedded webview is tried first, "
+                     "then the Tkinter editor, then the browser IDE."),
+    )
+    ide.add_argument("--ui", choices=("auto", "webview", "tk", "browser"), default="auto",
+                     help="which interface to launch (default: auto, falling back until one works)")
     ide.set_defaults(func=cmd_ide)
 
     tr = sub.add_parser("trace", help="show every statement a program runs")

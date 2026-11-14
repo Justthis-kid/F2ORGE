@@ -154,6 +154,12 @@ class _Generator:
                 if self.is_cpp:
                     return f"std::pow({left}, {right})"
                 return f"({left}^{right})"
+            if node.op in (".*", "./"):
+                # Element-wise operators only mean something for vectors, which this scalar
+                # converter does not support; emitting them verbatim would be invalid code.
+                raise TranspileError(
+                    f"the element-wise operator '{node.op}' has no scalar equivalent", node.span,
+                    hint="Converted code handles scalars only; rewrite this without vectors.")
             return f"({left} {node.op} {right})"
         if isinstance(node, S.Call):
             if node.func not in _FUNCTIONS:

@@ -103,10 +103,11 @@ To convert a script to another language, write an offline calculator, or draw a 
 `forge transpile`, `forge calc`, and `forge graph` further down; each takes a `.forge` or `.eq` file
 from `examples/` and writes one output file.
 
-`forge ide` opens the offline desktop IDE in an embedded webview, reusing the browser IDE UI and its
-MATLAB-style workspace, script editor, command window, and complete Blueprint canvas. Install the
-desktop webview dependency with `pip install "f2orge[desktop]"`; Windows needs the Microsoft
-WebView2 runtime. The Blueprint tab uses a graph-paper grid: add
+`forge ide` opens the offline IDE on your own machine. It tries, in order: an embedded webview window
+(one window, no external browser), the Tkinter editor (Python's built-in GUI, no extra package), and
+finally the local browser IDE. Pick one deliberately with `--ui webview`, `--ui tk`, or
+`--ui browser`; with `--ui` the command stops at that choice instead of falling back. The webview
+needs `pip install "f2orge[desktop]"`, and Windows needs the Microsoft WebView2 runtime. The Blueprint tab uses a graph-paper grid: add
 Input, Constant, Function, Call, Compare, arithmetic, Output, two-output, and Script nodes. A
 **Call** node names a function or equation and takes one pin per argument, so `area(r)` uses one and
 `cross(a, b)` two; a **Compare** node applies `<`, `<=`, `>`, `>=`, `==`, or `!=`; and a **two-output**
